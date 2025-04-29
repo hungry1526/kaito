@@ -2,7 +2,7 @@
 # Image URL to use all building/pushing image targets
 REGISTRY ?= YOUR_REGISTRY
 IMG_NAME ?= workspace
-VERSION ?= v0.4.4
+VERSION ?= v0.4.5
 GPU_PROVISIONER_VERSION ?= 0.3.3
 RAGENGINE_IMG_NAME ?= ragengine
 IMG_TAG ?= $(subst v,,$(VERSION))
@@ -138,9 +138,11 @@ GINKGO_NO_COLOR ?= false
 GINKGO_TIMEOUT ?= 120m
 GINKGO_ARGS ?= --label-filter="$(GINKGO_LABEL)" -focus="$(GINKGO_FOCUS)" -skip="$(GINKGO_SKIP)" -nodes=$(GINKGO_NODES) -no-color=$(GINKGO_NO_COLOR) -timeout=$(GINKGO_TIMEOUT) --fail-fast
 
+.PHONY: $(E2E_TEST)
 $(E2E_TEST):
 	(cd test/e2e && go test -c . -o $(E2E_TEST))
 
+.PHONY: $(RAGENGINE_E2E_TEST)
 $(RAGENGINE_E2E_TEST):
 	(cd test/rage2e && go test -c . -o $(RAGENGINE_E2E_TEST))
 
@@ -285,6 +287,13 @@ docker-build-adapter: docker-buildx
 		--platform="linux/$(ARCH)" \
 		--pull \
 		--tag $(REGISTRY)/e2e-adapter2:0.0.1 .
+	docker buildx build \
+		--build-arg ADAPTER_PATH=docker/adapters/adapter-phi-3-mini-pycoder \
+		--file ./docker/adapters/Dockerfile \
+		--output=$(OUTPUT_TYPE) \
+		--platform="linux/$(ARCH)" \
+		--pull \
+		--tag $(REGISTRY)/adapter-phi-3-mini-pycoder:0.0.1 .
 
 .PHONY: docker-build-dataset
 docker-build-dataset: docker-buildx

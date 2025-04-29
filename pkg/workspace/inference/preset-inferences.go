@@ -16,6 +16,7 @@ import (
 
 	"github.com/kaito-project/kaito/api/v1beta1"
 	"github.com/kaito-project/kaito/pkg/model"
+	pkgmodel "github.com/kaito-project/kaito/pkg/model"
 	"github.com/kaito-project/kaito/pkg/utils"
 	"github.com/kaito-project/kaito/pkg/utils/consts"
 	"github.com/kaito-project/kaito/pkg/utils/resources"
@@ -70,9 +71,9 @@ var (
 	}
 )
 
-func updateTorchParamsForDistributedInference(ctx context.Context, kubeClient client.Client, wObj *v1beta1.Workspace, inferenceParam *model.PresetParam) error {
+func updateTorchParamsForDistributedInference(ctx context.Context, kubeClient client.Client, wObj *v1beta1.Workspace, inferenceParam *pkgmodel.PresetParam) error {
 	runtimeName := v1beta1.GetWorkspaceRuntimeName(wObj)
-	if runtimeName != model.RuntimeNameHuggingfaceTransformers {
+	if runtimeName != pkgmodel.RuntimeNameHuggingfaceTransformers {
 		return fmt.Errorf("distributed inference is not supported for runtime %s", runtimeName)
 	}
 
@@ -83,12 +84,14 @@ func updateTorchParamsForDistributedInference(ctx context.Context, kubeClient cl
 	}
 
 	nodes := *wObj.Resource.Count
-	inferenceParam.Transformers.TorchRunParams["nnodes"] = strconv.Itoa(nodes)
-	inferenceParam.Transformers.TorchRunParams["nproc_per_node"] = strconv.Itoa(inferenceParam.WorldSize / nodes)
-	if nodes > 1 {
-		inferenceParam.Transformers.TorchRunParams["node_rank"] = "$(echo $HOSTNAME | grep -o '[^-]*$')"
-		inferenceParam.Transformers.TorchRunParams["master_addr"] = existingService.Spec.ClusterIP
-		inferenceParam.Transformers.TorchRunParams["master_port"] = "29500"
+	if inferenceParam.Transformers.TorchRunParams != nil {
+		inferenceParam.Transformers.TorchRunParams["nnodes"] = strconv.Itoa(nodes)
+		inferenceParam.Transformers.TorchRunParams["nproc_per_node"] = strconv.Itoa(inferenceParam.WorldSize / nodes)
+		if nodes > 1 {
+			inferenceParam.Transformers.TorchRunParams["node_rank"] = "$(echo $HOSTNAME | grep -o '[^-]*$')"
+			inferenceParam.Transformers.TorchRunParams["master_addr"] = existingService.Spec.ClusterIP
+			inferenceParam.Transformers.TorchRunParams["master_port"] = "29500"
+		}
 	}
 	if inferenceParam.Transformers.TorchRunRdzvParams != nil {
 		inferenceParam.Transformers.TorchRunRdzvParams["max_restarts"] = "3"
@@ -127,7 +130,7 @@ func GetInferenceImageInfo(ctx context.Context, workspaceObj *v1beta1.Workspace,
 }
 
 func CreatePresetInference(ctx context.Context, workspaceObj *v1beta1.Workspace, revisionNum string,
-	model model.Model, kubeClient client.Client) (client.Object, error) {
+	model pkgmodel.Model, kubeClient client.Client) (client.Object, error) {
 	inferenceParam := model.GetInferenceParameters().DeepCopy()
 
 	configVolume, err := resources.EnsureConfigOrCopyFromDefault(ctx, kubeClient,
@@ -151,20 +154,26 @@ func CreatePresetInference(ctx context.Context, workspaceObj *v1beta1.Workspace,
 	}
 
 	// resource requirements
-	skuNumGPUs, err := utils.GetSKUNumGPUs(ctx, kubeClient, workspaceObj.Status.WorkerNodes,
-		workspaceObj.Resource.InstanceType, inferenceParam.GPUCountRequirement)
+	var skuNumGPUs int
+	gpuConfig, err := utils.GetGPUConfigBySKU(workspaceObj.Resource.InstanceType)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get SKU num GPUs: %v", err)
+		gpuConfig, err = utils.TryGetGPUConfigFromNode(ctx, kubeClient, workspaceObj.Status.WorkerNodes)
+		if err != nil {
+			defaultNumGPU := resource.MustParse(inferenceParam.GPUCountRequirement)
+			skuNumGPUs = int(defaultNumGPU.Value())
+		}
+	}
+	if gpuConfig != nil {
+		skuNumGPUs = gpuConfig.GPUCount
 	}
 	resourceReq := corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
-			corev1.ResourceName(resources.CapacityNvidiaGPU): resource.MustParse(skuNumGPUs),
+			corev1.ResourceName(resources.CapacityNvidiaGPU): *resource.NewQuantity(int64(skuNumGPUs), resource.DecimalSI),
 		},
 		Limits: corev1.ResourceList{
-			corev1.ResourceName(resources.CapacityNvidiaGPU): resource.MustParse(skuNumGPUs),
+			corev1.ResourceName(resources.CapacityNvidiaGPU): *resource.NewQuantity(int64(skuNumGPUs), resource.DecimalSI),
 		},
 	}
-	skuGPUCount, _ := strconv.Atoi(skuNumGPUs)
 
 	// additional volume
 	var volumes []corev1.Volume
@@ -176,7 +185,7 @@ func CreatePresetInference(ctx context.Context, workspaceObj *v1beta1.Workspace,
 	volumeMounts = append(volumeMounts, cmVolumeMount)
 
 	// add share memory for cross process communication
-	shmVolume, shmVolumeMount := utils.ConfigSHMVolume(skuGPUCount)
+	shmVolume, shmVolumeMount := utils.ConfigSHMVolume(skuNumGPUs)
 	if shmVolume.Name != "" {
 		volumes = append(volumes, shmVolume)
 	}
@@ -191,7 +200,15 @@ func CreatePresetInference(ctx context.Context, workspaceObj *v1beta1.Workspace,
 
 	// inference command
 	runtimeName := v1beta1.GetWorkspaceRuntimeName(workspaceObj)
-	commands := inferenceParam.GetInferenceCommand(runtimeName, skuNumGPUs, &cmVolumeMount)
+	commands := inferenceParam.GetInferenceCommand(pkgmodel.RuntimeContext{
+		RuntimeName:  runtimeName,
+		GPUConfig:    gpuConfig,
+		ConfigVolume: &cmVolumeMount,
+		SKUNumGPUs:   skuNumGPUs,
+		RuntimeContextExtraArguments: pkgmodel.RuntimeContextExtraArguments{
+			AdaptersEnabled: len(workspaceObj.Inference.Adapters) > 0,
+		},
+	})
 
 	image, imagePullSecrets := GetInferenceImageInfo(ctx, workspaceObj, inferenceParam)
 

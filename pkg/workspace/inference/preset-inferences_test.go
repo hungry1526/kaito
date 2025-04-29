@@ -46,7 +46,7 @@ func TestCreatePresetInference(t *testing.T) {
 			workload: "Deployment",
 			// No BaseCommand, TorchRunParams, TorchRunRdzvParams, or ModelRunParams
 			// So expected cmd consists of shell command and inference file
-			expectedCmd: "/bin/sh -c python3 /workspace/vllm/inference_api.py --tensor-parallel-size=2 --served-model-name=mymodel --kaito-config-file=/mnt/config/inference_config.yaml",
+			expectedCmd: "/bin/sh -c python3 /workspace/vllm/inference_api.py --tensor-parallel-size=2 --served-model-name=mymodel --gpu-memory-utilization=0.90 --kaito-config-file=/mnt/config/inference_config.yaml",
 			hasAdapters: false,
 		},
 
@@ -61,7 +61,22 @@ func TestCreatePresetInference(t *testing.T) {
 			workload: "Deployment",
 			// No BaseCommand, TorchRunParams, TorchRunRdzvParams, or ModelRunParams
 			// So expected cmd consists of shell command and inference file
-			expectedCmd: "/bin/sh -c python3 /workspace/vllm/inference_api.py --kaito-config-file=/mnt/config/inference_config.yaml",
+			expectedCmd: "/bin/sh -c python3 /workspace/vllm/inference_api.py --kaito-config-file=/mnt/config/inference_config.yaml --gpu-memory-utilization=0.90",
+			hasAdapters: false,
+		},
+
+		"test-model-no-lora-support/vllm": {
+			workspace: test.MockWorkspaceWithPresetVLLM,
+			nodeCount: 1,
+			modelName: "test-no-lora-support-model",
+			callMocks: func(c *test.MockClient) {
+				c.On("Get", mock.IsType(context.TODO()), mock.Anything, mock.IsType(&corev1.ConfigMap{}), mock.Anything).Return(nil)
+				c.On("Create", mock.IsType(context.TODO()), mock.IsType(&appsv1.Deployment{}), mock.Anything).Return(nil)
+			},
+			workload: "Deployment",
+			// No BaseCommand, TorchRunParams, TorchRunRdzvParams, or ModelRunParams
+			// So expected cmd consists of shell command and inference file
+			expectedCmd: "/bin/sh -c python3 /workspace/vllm/inference_api.py --kaito-config-file=/mnt/config/inference_config.yaml --gpu-memory-utilization=0.90",
 			hasAdapters: false,
 		},
 
@@ -74,7 +89,7 @@ func TestCreatePresetInference(t *testing.T) {
 				c.On("Create", mock.IsType(context.TODO()), mock.IsType(&appsv1.Deployment{}), mock.Anything).Return(nil)
 			},
 			workload:       "Deployment",
-			expectedCmd:    "/bin/sh -c python3 /workspace/vllm/inference_api.py --tensor-parallel-size=2 --served-model-name=mymodel --kaito-config-file=/mnt/config/inference_config.yaml",
+			expectedCmd:    "/bin/sh -c python3 /workspace/vllm/inference_api.py --enable-lora --tensor-parallel-size=2 --served-model-name=mymodel --gpu-memory-utilization=0.90 --kaito-config-file=/mnt/config/inference_config.yaml",
 			hasAdapters:    true,
 			expectedVolume: "adapter-volume",
 		},
@@ -144,6 +159,8 @@ func TestCreatePresetInference(t *testing.T) {
 						Strength: &ValidStrength,
 					},
 				}
+			} else {
+				workspace.Inference.Adapters = nil
 			}
 
 			model := plugin.KaitoModelRegister.MustGet(tc.modelName)
