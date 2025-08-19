@@ -1,11 +1,22 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package utils
 
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -13,11 +24,13 @@ import (
 	awsapis "github.com/aws/karpenter-provider-aws/pkg/apis"
 	awsv1beta1 "github.com/aws/karpenter-provider-aws/pkg/apis/v1beta1"
 	"gopkg.in/yaml.v2"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"knative.dev/pkg/apis"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	karpenterapis "sigs.k8s.io/karpenter/pkg/apis"
@@ -25,6 +38,10 @@ import (
 
 	"github.com/kaito-project/kaito/pkg/sku"
 	"github.com/kaito-project/kaito/pkg/utils/consts"
+)
+
+const (
+	errInvalidModelVersionURL = "invalid model version URL: %s. Expected format: https://huggingface.co/<org>/<model>/commit/<revision>"
 )
 
 var (
@@ -112,6 +129,12 @@ func BuildCmdStr(baseCommand string, runParams ...map[string]string) string {
 	return updatedBaseCommand
 }
 
+func BuildIfElseCmdStr(condition string, trueCmd string, trueCmdParams map[string]string, falseCmd string, falseCmdParams map[string]string) string {
+	trueCmdStr := BuildCmdStr(trueCmd, trueCmdParams)
+	falseCmdStr := BuildCmdStr(falseCmd, falseCmdParams)
+	return fmt.Sprintf("if %s; then %s; else %s; fi", condition, trueCmdStr, falseCmdStr)
+}
+
 func ShellCmd(command string) []string {
 	return []string{
 		"/bin/sh",
@@ -180,24 +203,19 @@ func FetchGPUCountFromNodes(ctx context.Context, kubeClient client.Client, nodeN
 		return 0, fmt.Errorf("no worker nodes found in the workspace")
 	}
 
-	var allNodes v1.NodeList
+	var allNodes corev1.NodeList
 	for _, nodeName := range nodeNames {
-		nodeList := &v1.NodeList{}
-		fieldSelector := fields.OneTermEqualSelector("metadata.name", nodeName)
-		err := kubeClient.List(ctx, nodeList, &client.ListOptions{
-			FieldSelector: fieldSelector,
-		})
-		if err != nil {
-			fmt.Printf("Failed to list Node object %s: %v\n", nodeName, err)
-			continue
+		node := &corev1.Node{}
+		if err := kubeClient.Get(ctx, types.NamespacedName{Name: nodeName}, node); err != nil { // Note: nodes don't have a namespace here.
+			return 0, fmt.Errorf("failed to get node %s: %w", nodeName, err)
 		}
-		allNodes.Items = append(allNodes.Items, nodeList.Items...)
+		allNodes.Items = append(allNodes.Items, *node)
 	}
 
 	return GetPerNodeGPUCountFromNodes(&allNodes), nil
 }
 
-func GetPerNodeGPUCountFromNodes(nodeList *v1.NodeList) int {
+func GetPerNodeGPUCountFromNodes(nodeList *corev1.NodeList) int {
 	for _, node := range nodeList.Items {
 		gpuCount, exists := node.Status.Capacity[consts.NvidiaGPU]
 		if exists && gpuCount.String() != "" {
@@ -216,13 +234,13 @@ func ExtractAndValidateRepoName(image string) error {
 
 	// Check if repository name is lowercase
 	if repoName != strings.ToLower(repoName) {
-		return fmt.Errorf("Repository name must be lowercase")
+		return fmt.Errorf("repository name must be lowercase")
 	}
 
 	return nil
 }
 
-func SelectNodes(qualified []*v1.Node, preferred []string, previous []string, count int) []*v1.Node {
+func SelectNodes(qualified []*corev1.Node, preferred []string, previous []string, count int) []*corev1.Node {
 
 	sort.Slice(qualified, func(i, j int) bool {
 		iPreferred := Contains(preferred, qualified[i].Name)
@@ -267,4 +285,101 @@ func SelectNodes(qualified []*v1.Node, preferred []string, previous []string, co
 	}
 
 	return qualified[0:count]
+}
+
+// ParseHuggingFaceModelVersion parses the model version in the format of https://huggingface.co/<org>/<model>/commit/<revision>
+// and returns the repoId and revision. If the commit is not specified, it returns an empty string for revision,
+// and the main branch HEAD commit is used.
+//
+// Example 1:
+//
+//	Version: "https://huggingface.co/tiiuae/falcon-7b/commit/ec89142b67d748a1865ea4451372db8313ada0d8"
+//	RepoId: "tiiuae/falcon-7b"
+//	Revision: "ec89142b67d748a1865ea4451372db8313ada0d8"
+//
+// Example 2:
+//
+//	Version: https://huggingface.co/tiiuae/falcon-7b
+//	RepoId: "tiiuae/falcon-7b"
+//	Revision: "" (main branch HEAD commit is used)
+func ParseHuggingFaceModelVersion(version string) (repoId string, revision string, err error) {
+	parsedURL, err := url.Parse(version)
+	if err != nil {
+		return "", "", err
+	}
+
+	if parsedURL.Host != "huggingface.co" {
+		return "", "", fmt.Errorf(errInvalidModelVersionURL, version)
+	}
+
+	parts := strings.Split(strings.Trim(parsedURL.Path, "/"), "/")
+	switch len(parts) {
+	case 2: // Expected path: "<org>/<model>"
+		repoId, revision = parts[0]+"/"+parts[1], ""
+		return
+	case 4: // Expected path: "<org>/<model>/commit/<revision>"
+		if parts[2] != "commit" {
+			break
+		}
+		repoId, revision = parts[0]+"/"+parts[1], parts[3]
+		return
+	}
+
+	return "", "", fmt.Errorf(errInvalidModelVersionURL, version)
+}
+
+// getRayLeaderHost constructs the leader host for the Ray cluster.
+func GetRayLeaderHost(meta metav1.ObjectMeta) string {
+	return fmt.Sprintf("%s-0.%s-headless.%s.svc.cluster.local",
+		meta.Name, meta.Name, meta.Namespace)
+}
+
+// DedupVolumeMounts removes duplicate volume mounts by only keeping the first occurrence of each name
+func DedupVolumeMounts(mounts []corev1.VolumeMount) []corev1.VolumeMount {
+	seen := make(map[string]bool)
+	var result []corev1.VolumeMount
+
+	for _, mount := range mounts {
+		if !seen[mount.Name] {
+			seen[mount.Name] = true
+			result = append(result, mount)
+		}
+	}
+
+	return result
+}
+
+// InferencePoolName returns the name of the inference pool for the given workspace.
+func InferencePoolName(workspaceName string) string {
+	return fmt.Sprintf("%s-inferencepool", workspaceName)
+}
+
+// ClientObjectSpecEqual compares the spec field of two client.Objects for equality.
+// For example:
+//
+//	a:   {"apiVersion": "apps/v1", "kind": "Deployment", "spec": {"replicas": 2}}
+//	b:   {"apiVersion": "apps/v1", "kind": "Deployment", "spec": {"replicas": 2}}
+//	result: true
+//
+//	c:   {"apiVersion": "apps/v1", "kind": "Deployment", "spec": {"replicas": 3}}
+//	d:   {"apiVersion": "apps/v1", "kind": "Deployment", "spec": {"replicas": 2}}
+//	result: false
+func ClientObjectSpecEqual(a, b client.Object) (bool, error) {
+	aUnstructured, err := runtime.DefaultUnstructuredConverter.ToUnstructured(a)
+	if err != nil {
+		return false, err
+	}
+	bUnstructured, err := runtime.DefaultUnstructuredConverter.ToUnstructured(b)
+	if err != nil {
+		return false, err
+	}
+	aSpec, aOK, err := unstructured.NestedMap(aUnstructured, "spec")
+	if err != nil {
+		return false, err
+	}
+	bSpec, bOK, err := unstructured.NestedMap(bUnstructured, "spec")
+	if err != nil {
+		return false, err
+	}
+	return aOK && bOK && equality.Semantic.DeepEqual(aSpec, bSpec), nil
 }

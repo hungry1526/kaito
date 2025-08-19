@@ -1,11 +1,22 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package controllers
 
 import (
 	"context"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -37,14 +48,19 @@ func (c *WorkspaceReconciler) garbageCollectWorkspace(ctx context.Context, wObj 
 		}
 	}
 
-	if controllerutil.RemoveFinalizer(wObj, consts.WorkspaceFinalizer) {
-		if updateErr := c.Update(ctx, wObj, &client.UpdateOptions{}); updateErr != nil {
-			klog.ErrorS(updateErr, "failed to remove the finalizer from the workspace",
-				"workspace", klog.KObj(wObj))
-			return ctrl.Result{}, updateErr
+	updateErr := updateWorkspaceWithRetry(ctx, c.Client, wObj, func(ws *kaitov1beta1.Workspace) error {
+		controllerutil.RemoveFinalizer(ws, consts.WorkspaceFinalizer)
+		return nil
+	})
+	if updateErr != nil {
+		if apierrors.IsNotFound(updateErr) {
+			return ctrl.Result{}, nil
 		}
-		klog.InfoS("successfully removed the workspace finalizers", "workspace", klog.KObj(wObj))
+		klog.ErrorS(updateErr, "failed to update the workspace to remove finalizer", "workspace", klog.KObj(wObj))
+		return ctrl.Result{}, updateErr
 	}
+
+	klog.InfoS("successfully removed the workspace finalizers", "workspace", klog.KObj(wObj))
 
 	return ctrl.Result{}, nil
 }

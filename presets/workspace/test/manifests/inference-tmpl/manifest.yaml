@@ -14,9 +14,21 @@ deployment:
         labels:
           app: WORKLOAD_NAME
       spec:
+        initContainers:
+        - name: oras-pull
+          image: mcr.microsoft.com/oss/v2/oras-project/oras:v1.2.3
+          command:
+          - oras
+          - pull
+          - REPO/MODEL_NAME:TAG
+          - -o
+          - /workspace/weights
+          volumeMounts:
+          - name: weights-volume
+            mountPath: /workspace/weights
         containers:
         - name: WORKLOAD_NAME-container
-          image: REPO/MODEL_NAME:TAG
+          image: REPO/base:0.0.5
           command:
             - /bin/sh
             - -c
@@ -43,7 +55,11 @@ deployment:
             mountPath: /dev/shm
           - name: config-volume
             mountPath: /mnt/config
+          - name: weights-volume
+            mountPath: /workspace/weights
         volumes:
+        - name: weights-volume
+          emptyDir: {}
         - name: dshm
           emptyDir:
             medium: Memory
@@ -78,6 +94,7 @@ config:
         swap-space: 4
         served-model-name: test
         dtype: float16
+        max-model-len: 2048
 
         # max-seq-len-to-capture: 8192
         # num-scheduler-steps: 1

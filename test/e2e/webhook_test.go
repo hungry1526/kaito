@@ -1,5 +1,15 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package e2e
 
@@ -35,7 +45,7 @@ var _ = Describe("Workspace Validation Webhook", utils.GinkgoLabelFastCheck, fun
 		workspaceObj := utils.GenerateInferenceWorkspaceManifest(fmt.Sprint("webhook-", rand.Intn(1000)), namespaceName, "", 1, "Standard_Bad",
 			&metav1.LabelSelector{
 				MatchLabels: map[string]string{"kaito-workspace": "webhook-e2e-test"},
-			}, nil, PresetFalcon7BModel, kaitov1beta1.ModelImageAccessModePublic, nil, nil, nil)
+			}, nil, PresetFalcon7BModel, nil, nil, nil, "")
 
 		By("Creating a workspace with invalid instancetype", func() {
 			// Create workspace
@@ -50,7 +60,7 @@ var _ = Describe("Workspace Validation Webhook", utils.GinkgoLabelFastCheck, fun
 		workspaceObj := utils.GenerateInferenceWorkspaceManifest(fmt.Sprint("webhook-", rand.Intn(1000)), namespaceName, "", 1, "Standard_NC6",
 			&metav1.LabelSelector{
 				MatchLabels: map[string]string{"kaito-workspace": "webhook-e2e-test"},
-			}, nil, "invalid-name", kaitov1beta1.ModelImageAccessModePublic, nil, nil, nil)
+			}, nil, "invalid-name", nil, nil, nil, "")
 
 		By("Creating a workspace with invalid preset name", func() {
 			// Create workspace
@@ -66,7 +76,7 @@ var _ = Describe("Workspace Validation Webhook", utils.GinkgoLabelFastCheck, fun
 			workspaceObj := utils.GenerateInferenceWorkspaceManifestWithVLLM(fmt.Sprint("webhook-", rand.Intn(1000)), namespaceName, "", 1, "Standard_NC6s_v3",
 				&metav1.LabelSelector{
 					MatchLabels: map[string]string{"kaito-workspace": "webhook-e2e-test"},
-				}, nil, PresetFalcon7BModel, kaitov1beta1.ModelImageAccessModePublic, nil, nil, testAdapters1)
+				}, nil, PresetFalcon7BModel, nil, nil, testAdapters1, "")
 
 			// Create workspace
 			Eventually(func() error {
@@ -79,7 +89,7 @@ var _ = Describe("Workspace Validation Webhook", utils.GinkgoLabelFastCheck, fun
 			workspaceObj := utils.GenerateInferenceWorkspaceManifestWithVLLM(fmt.Sprint("webhook-", rand.Intn(1000)), namespaceName, "", 1, "Standard_NC6s_v3",
 				&metav1.LabelSelector{
 					MatchLabels: map[string]string{"kaito-workspace": "webhook-e2e-test"},
-				}, nil, PresetPhi4MiniModel, kaitov1beta1.ModelImageAccessModePublic, nil, nil, phi4Adapter)
+				}, nil, PresetPhi4MiniModel, nil, nil, phi4Adapter, "")
 
 			// Create workspace
 			Eventually(func() error {
@@ -96,7 +106,7 @@ var _ = Describe("Workspace Validation Webhook", utils.GinkgoLabelFastCheck, fun
 			workspaceObj := utils.GenerateInferenceWorkspaceManifest(fmt.Sprint("webhook-", rand.Intn(1000)), namespaceName, "", 1, "Standard_NC6s_v3",
 				&metav1.LabelSelector{
 					MatchLabels: map[string]string{"kaito-workspace": "webhook-e2e-test"},
-				}, nil, PresetFalcon7BModel, kaitov1beta1.ModelImageAccessModePublic, nil, nil, testAdapters1)
+				}, nil, PresetFalcon7BModel, nil, nil, testAdapters1, "")
 			// Create workspace
 			Eventually(func() error {
 				return utils.TestingCluster.KubeClient.Create(ctx, workspaceObj, &client.CreateOptions{})
@@ -115,7 +125,7 @@ var _ = Describe("Workspace Validation Webhook", utils.GinkgoLabelFastCheck, fun
 			workspaceObj := utils.GenerateInferenceWorkspaceManifestWithVLLM(fmt.Sprint("webhook-", rand.Intn(1000)), namespaceName, "", 1, "Standard_NC12s_v3",
 				&metav1.LabelSelector{
 					MatchLabels: map[string]string{"kaito-workspace": "webhook-e2e-test"},
-				}, nil, PresetFalcon7BModel, kaitov1beta1.ModelImageAccessModePublic, nil, nil, nil)
+				}, nil, PresetFalcon7BModel, nil, nil, nil, "")
 
 			// Create workspace
 			Eventually(func() error {
@@ -128,7 +138,7 @@ var _ = Describe("Workspace Validation Webhook", utils.GinkgoLabelFastCheck, fun
 			workspaceObj := utils.GenerateInferenceWorkspaceManifest(fmt.Sprint("webhook-", rand.Intn(1000)), namespaceName, "", 1, "Standard_NC12s_v3",
 				&metav1.LabelSelector{
 					MatchLabels: map[string]string{"kaito-workspace": "webhook-e2e-test"},
-				}, nil, PresetFalcon7BModel, kaitov1beta1.ModelImageAccessModePublic, nil, nil, nil)
+				}, nil, PresetFalcon7BModel, nil, nil, nil, "")
 
 			// Create workspace
 			Eventually(func() error {
@@ -146,7 +156,7 @@ var _ = Describe("Workspace Validation Webhook", utils.GinkgoLabelFastCheck, fun
 			workspaceObj := utils.GenerateInferenceWorkspaceManifestWithVLLM(fmt.Sprint("webhook-", rand.Intn(1000)), namespaceName, "", 1, "Standard_NC12s_v3",
 				&metav1.LabelSelector{
 					MatchLabels: map[string]string{"kaito-workspace": "webhook-e2e-test"},
-				}, nil, PresetFalcon7BModel, kaitov1beta1.ModelImageAccessModePublic, nil, nil, nil)
+				}, nil, PresetFalcon7BModel, nil, nil, nil, "")
 
 			cm := corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
@@ -231,7 +241,7 @@ vllm:
 		workspaceObj := utils.GenerateInferenceWorkspaceManifest(fmt.Sprint("webhook-", rand.Intn(1000)), namespaceName, "", 1, "Standard_NC6s_v3",
 			&metav1.LabelSelector{
 				MatchLabels: map[string]string{"kaito-workspace": "webhook-e2e-test"},
-			}, nil, PresetFalcon7BModel, kaitov1beta1.ModelImageAccessModePublic, nil, nil, nil)
+			}, nil, PresetFalcon7BModel, nil, nil, nil, "")
 
 		By("Creating a valid workspace", func() {
 			// Create workspace
@@ -315,7 +325,7 @@ vllm:
 		workspaceObj := utils.GenerateInferenceWorkspaceManifest(fmt.Sprint("webhook-", rand.Intn(1000)), namespaceName, "", 1, "Standard_NC6s_v3",
 			&metav1.LabelSelector{
 				MatchLabels: map[string]string{"kaito-workspace": "webhook-e2e-test"},
-			}, nil, PresetFalcon7BModel, kaitov1beta1.ModelImageAccessModePublic, nil, nil, nil)
+			}, nil, PresetFalcon7BModel, nil, nil, nil, "")
 
 		By("Creating a valid workspace", func() {
 			// Create workspace

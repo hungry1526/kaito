@@ -1,16 +1,21 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package v1beta1
 
 import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-)
-
-const (
-	ModelImageAccessModePublic  ModelImageAccessMode = "public"
-	ModelImageAccessModePrivate ModelImageAccessMode = "private"
 )
 
 // ResourceSpec describes the resource requirement of running the workload.
@@ -35,6 +40,7 @@ type ResourceSpec struct {
 
 	// PreferredNodes is an optional node list specified by the user.
 	// If a node in the list does not have the required labels, it will be ignored.
+	// The controller will use the `InstanceType` to create the remaining nodes.
 	// +optional
 	PreferredNodes []string `json:"preferredNodes,omitempty"`
 }
@@ -47,6 +53,7 @@ type ModelImageAccessMode string
 type PresetMeta struct {
 	// Name of the supported models with preset configurations.
 	Name ModelName `json:"name"`
+	// Deprecated: This field is deprecated in v1beta1 and will be removed in a future version.
 	// AccessMode specifies whether the containerized model image is accessible via public registry
 	// or private registry. This field defaults to "public" if not specified.
 	// If this field is "private", user needs to provide the private image information in PresetOptions.
@@ -56,12 +63,17 @@ type PresetMeta struct {
 }
 
 type PresetOptions struct {
+	// Deprecated: This field is deprecated in v1beta1 and will be removed in a future version.
 	// Image is the name of the containerized model image.
 	// +optional
 	Image string `json:"image,omitempty"`
+	// Deprecated: This field is deprecated in v1beta1 and will be removed in a future version.
 	// ImagePullSecrets is a list of secret names in the same namespace used for pulling the model image.
 	// +optional
 	ImagePullSecrets []string `json:"imagePullSecrets,omitempty"`
+	// ModelAccessSecret is the name of the secret that contains the huggingface access token.
+	// +optional
+	ModelAccessSecret string `json:"modelAccessSecret,omitempty"`
 }
 
 // PresetSpec provides the information for rendering preset configurations to run the model inference service.

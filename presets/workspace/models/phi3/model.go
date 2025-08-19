@@ -1,11 +1,21 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package phi3
 
 import (
 	"time"
 
-	kaitov1beta1 "github.com/kaito-project/kaito/api/v1beta1"
 	"github.com/kaito-project/kaito/pkg/model"
 	"github.com/kaito-project/kaito/pkg/utils/plugin"
 	"github.com/kaito-project/kaito/pkg/workspace/inference"
@@ -63,15 +73,14 @@ type phi3Mini4KInst struct{}
 func (*phi3Mini4KInst) GetInferenceParameters() *model.PresetParam {
 	return &model.PresetParam{
 		Metadata:                  metadata.MustGet(PresetPhi3Mini4kModel),
-		ImageAccessMode:           string(kaitov1beta1.ModelImageAccessModePublic),
-		DiskStorageRequirement:    "50Gi",
+		DiskStorageRequirement:    "80Gi",
 		GPUCountRequirement:       "1",
 		TotalGPUMemoryRequirement: "9Gi",
 		PerGPUMemoryRequirement:   "0Gi", // We run Phi using native vertical model parallel, no per GPU memory requirement.
 		RuntimeParam: model.RuntimeParam{
 			Transformers: model.HuggingfaceTransformersParam{
 				BaseCommand:       baseCommandPresetPhiInference,
-				TorchRunParams:    inference.DefaultAccelerateParams,
+				AccelerateParams:  inference.DefaultAccelerateParams,
 				InferenceMainFile: inference.DefaultTransformersMainFile,
 				ModelRunParams:    phiRunParams,
 			},
@@ -87,12 +96,11 @@ func (*phi3Mini4KInst) GetInferenceParameters() *model.PresetParam {
 func (*phi3Mini4KInst) GetTuningParameters() *model.PresetParam {
 	return &model.PresetParam{
 		Metadata:                  metadata.MustGet(PresetPhi3Mini4kModel),
-		ImageAccessMode:           string(kaitov1beta1.ModelImageAccessModePublic),
-		DiskStorageRequirement:    "50Gi",
+		DiskStorageRequirement:    "80Gi",
 		GPUCountRequirement:       "1",
 		TotalGPUMemoryRequirement: "72Gi",
 		PerGPUMemoryRequirement:   "72Gi",
-		// TorchRunParams:            inference.DefaultAccelerateParams,
+		// AccelerateParams:          inference.DefaultAccelerateParams,
 		// ModelRunParams:            phiRunParams,
 		ReadinessTimeout: time.Duration(30) * time.Minute,
 		RuntimeParam: model.RuntimeParam{
@@ -114,15 +122,14 @@ type phi3Mini128KInst struct{}
 func (*phi3Mini128KInst) GetInferenceParameters() *model.PresetParam {
 	return &model.PresetParam{
 		Metadata:                  metadata.MustGet(PresetPhi3Mini128kModel),
-		ImageAccessMode:           string(kaitov1beta1.ModelImageAccessModePublic),
-		DiskStorageRequirement:    "50Gi",
+		DiskStorageRequirement:    "80Gi",
 		GPUCountRequirement:       "1",
 		TotalGPUMemoryRequirement: "9Gi",
 		PerGPUMemoryRequirement:   "0Gi", // We run Phi using native vertical model parallel, no per GPU memory requirement.
 		RuntimeParam: model.RuntimeParam{
 			Transformers: model.HuggingfaceTransformersParam{
 				BaseCommand:       baseCommandPresetPhiInference,
-				TorchRunParams:    inference.DefaultAccelerateParams,
+				AccelerateParams:  inference.DefaultAccelerateParams,
 				InferenceMainFile: inference.DefaultTransformersMainFile,
 				ModelRunParams:    phiRunParams,
 			},
@@ -138,8 +145,7 @@ func (*phi3Mini128KInst) GetInferenceParameters() *model.PresetParam {
 func (*phi3Mini128KInst) GetTuningParameters() *model.PresetParam {
 	return &model.PresetParam{
 		Metadata:                  metadata.MustGet(PresetPhi3Mini128kModel),
-		ImageAccessMode:           string(kaitov1beta1.ModelImageAccessModePublic),
-		DiskStorageRequirement:    "50Gi",
+		DiskStorageRequirement:    "80Gi",
 		GPUCountRequirement:       "1",
 		TotalGPUMemoryRequirement: "72Gi",
 		PerGPUMemoryRequirement:   "72Gi",
@@ -163,15 +169,14 @@ type phi3_5MiniInst struct{}
 func (*phi3_5MiniInst) GetInferenceParameters() *model.PresetParam {
 	return &model.PresetParam{
 		Metadata:                  metadata.MustGet(PresetPhi3_5MiniInstruct),
-		ImageAccessMode:           string(kaitov1beta1.ModelImageAccessModePublic),
-		DiskStorageRequirement:    "50Gi",
+		DiskStorageRequirement:    "70Gi",
 		GPUCountRequirement:       "1",
 		TotalGPUMemoryRequirement: "8Gi",
 		PerGPUMemoryRequirement:   "0Gi", // We run Phi using native vertical model parallel, no per GPU memory requirement.
 		RuntimeParam: model.RuntimeParam{
 			Transformers: model.HuggingfaceTransformersParam{
 				BaseCommand:       baseCommandPresetPhiInference,
-				TorchRunParams:    inference.DefaultAccelerateParams,
+				AccelerateParams:  inference.DefaultAccelerateParams,
 				InferenceMainFile: inference.DefaultTransformersMainFile,
 				ModelRunParams:    phiRunParams,
 			},
@@ -187,12 +192,11 @@ func (*phi3_5MiniInst) GetInferenceParameters() *model.PresetParam {
 func (*phi3_5MiniInst) GetTuningParameters() *model.PresetParam {
 	return &model.PresetParam{
 		Metadata:                  metadata.MustGet(PresetPhi3_5MiniInstruct),
-		ImageAccessMode:           string(kaitov1beta1.ModelImageAccessModePublic),
-		DiskStorageRequirement:    "50Gi",
+		DiskStorageRequirement:    "70Gi",
 		GPUCountRequirement:       "1",
 		TotalGPUMemoryRequirement: "72Gi",
 		PerGPUMemoryRequirement:   "72Gi",
-		// TorchRunParams:            inference.DefaultAccelerateParams,
+		// AccelerateParams:          inference.DefaultAccelerateParams,
 		// ModelRunParams:            phiRunParams,
 		ReadinessTimeout: time.Duration(30) * time.Minute,
 		RuntimeParam: model.RuntimeParam{
@@ -214,15 +218,14 @@ type Phi3Medium4kInstruct struct{}
 func (*Phi3Medium4kInstruct) GetInferenceParameters() *model.PresetParam {
 	return &model.PresetParam{
 		Metadata:                  metadata.MustGet(PresetPhi3Medium4kModel),
-		ImageAccessMode:           string(kaitov1beta1.ModelImageAccessModePublic),
-		DiskStorageRequirement:    "50Gi",
+		DiskStorageRequirement:    "120Gi",
 		GPUCountRequirement:       "1",
 		TotalGPUMemoryRequirement: "28Gi",
 		PerGPUMemoryRequirement:   "0Gi", // We run Phi using native vertical model parallel, no per GPU memory requirement.
 		RuntimeParam: model.RuntimeParam{
 			Transformers: model.HuggingfaceTransformersParam{
 				BaseCommand:       baseCommandPresetPhiInference,
-				TorchRunParams:    inference.DefaultAccelerateParams,
+				AccelerateParams:  inference.DefaultAccelerateParams,
 				InferenceMainFile: inference.DefaultTransformersMainFile,
 				ModelRunParams:    phiRunParams,
 			},
@@ -238,12 +241,11 @@ func (*Phi3Medium4kInstruct) GetInferenceParameters() *model.PresetParam {
 func (*Phi3Medium4kInstruct) GetTuningParameters() *model.PresetParam {
 	return &model.PresetParam{
 		Metadata:                  metadata.MustGet(PresetPhi3Medium4kModel),
-		ImageAccessMode:           string(kaitov1beta1.ModelImageAccessModePublic),
-		DiskStorageRequirement:    "50Gi",
+		DiskStorageRequirement:    "120Gi",
 		GPUCountRequirement:       "1",
 		TotalGPUMemoryRequirement: "80Gi",
 		PerGPUMemoryRequirement:   "80Gi",
-		// TorchRunParams:            inference.DefaultAccelerateParams,
+		// AccelerateParams:          inference.DefaultAccelerateParams,
 		// ModelRunParams:            phiRunParams,
 		ReadinessTimeout: time.Duration(30) * time.Minute,
 		RuntimeParam: model.RuntimeParam{
@@ -265,15 +267,14 @@ type Phi3Medium128kInstruct struct{}
 func (*Phi3Medium128kInstruct) GetInferenceParameters() *model.PresetParam {
 	return &model.PresetParam{
 		Metadata:                  metadata.MustGet(PresetPhi3Medium128kModel),
-		ImageAccessMode:           string(kaitov1beta1.ModelImageAccessModePublic),
-		DiskStorageRequirement:    "50Gi",
+		DiskStorageRequirement:    "120Gi",
 		GPUCountRequirement:       "1",
 		TotalGPUMemoryRequirement: "28Gi",
 		PerGPUMemoryRequirement:   "0Gi", // We run Phi using native vertical model parallel, no per GPU memory requirement.
 		RuntimeParam: model.RuntimeParam{
 			Transformers: model.HuggingfaceTransformersParam{
 				BaseCommand:       baseCommandPresetPhiInference,
-				TorchRunParams:    inference.DefaultAccelerateParams,
+				AccelerateParams:  inference.DefaultAccelerateParams,
 				InferenceMainFile: inference.DefaultTransformersMainFile,
 				ModelRunParams:    phiRunParams,
 			},
@@ -289,8 +290,7 @@ func (*Phi3Medium128kInstruct) GetInferenceParameters() *model.PresetParam {
 func (*Phi3Medium128kInstruct) GetTuningParameters() *model.PresetParam {
 	return &model.PresetParam{
 		Metadata:                  metadata.MustGet(PresetPhi3Medium128kModel),
-		ImageAccessMode:           string(kaitov1beta1.ModelImageAccessModePublic),
-		DiskStorageRequirement:    "50Gi",
+		DiskStorageRequirement:    "120Gi",
 		GPUCountRequirement:       "1",
 		TotalGPUMemoryRequirement: "80Gi",
 		PerGPUMemoryRequirement:   "80Gi",

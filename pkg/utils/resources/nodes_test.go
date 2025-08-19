@@ -1,5 +1,16 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package resources
 
 import (
@@ -10,6 +21,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"gotest.tools/assert"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kaito-project/kaito/pkg/utils/test"
@@ -18,25 +30,32 @@ import (
 func TestUpdateNodeWithLabel(t *testing.T) {
 	testcases := map[string]struct {
 		callMocks     func(c *test.MockClient)
+		nodeObj       *corev1.Node
 		expectedError error
 	}{
-		"Fail to update node because it cannot be retrieved": {
-			callMocks: func(c *test.MockClient) {
-				c.On("Get", mock.IsType(context.Background()), client.ObjectKey{Name: "mockNode"}, mock.IsType(&corev1.Node{}), mock.Anything).Return(errors.New("Cannot retrieve node"))
-			},
-			expectedError: errors.New("Cannot retrieve node"),
-		},
 		"Fail to update node because node cannot be updated": {
 			callMocks: func(c *test.MockClient) {
-				c.On("Get", mock.IsType(context.Background()), client.ObjectKey{Name: "mockNode"}, mock.Anything, mock.Anything).Return(nil)
 				c.On("Update", mock.IsType(context.Background()), mock.IsType(&corev1.Node{}), mock.Anything).Return(errors.New("Cannot update node"))
 			},
+			nodeObj:       &corev1.Node{},
 			expectedError: errors.New("Cannot update node"),
 		},
 		"Successfully updates node": {
 			callMocks: func(c *test.MockClient) {
-				c.On("Get", mock.IsType(context.Background()), client.ObjectKey{Name: "mockNode"}, mock.IsType(&corev1.Node{}), mock.Anything).Return(nil)
 				c.On("Update", mock.IsType(context.Background()), mock.IsType(&corev1.Node{}), mock.Anything).Return(nil)
+			},
+			nodeObj:       &corev1.Node{},
+			expectedError: nil,
+		},
+		"Skip update node because it already has the label": {
+			callMocks: func(c *test.MockClient) {},
+			nodeObj: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "mockNode",
+					Labels: map[string]string{
+						LabelKeyNvidia: LabelValueNvidia,
+					},
+				},
 			},
 			expectedError: nil,
 		},
@@ -47,7 +66,7 @@ func TestUpdateNodeWithLabel(t *testing.T) {
 			mockClient := test.NewClient()
 			tc.callMocks(mockClient)
 
-			err := UpdateNodeWithLabel(context.Background(), "mockNode", "fakeKey", "fakeVal", mockClient)
+			err := UpdateNodeWithLabel(context.Background(), tc.nodeObj, "fakeKey", "fakeVal", mockClient)
 			if tc.expectedError == nil {
 				assert.Check(t, err == nil, "Not expected to return error")
 			} else {

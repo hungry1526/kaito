@@ -1,37 +1,56 @@
-# Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# Copyright (c) KAITO authors.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
 import os
 from dataclasses import asdict
 from datetime import datetime
-from parser import parse_configs, load_chat_template
 
 import torch
 from accelerate import Accelerator
+from cli import DatasetConfig, ExtDataCollator, ExtLoraConfig, ModelConfig
 from dataset import DatasetManager
+from parser import load_chat_template, parse_configs
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from transformers import (AutoModelForCausalLM, AutoTokenizer,
-                          BitsAndBytesConfig,
-                          TrainerCallback, TrainerControl, TrainerState)
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    TrainerCallback,
+    TrainerControl,
+    TrainerState,
+    TrainingArguments,
+)
 from trl import SFTTrainer
 
 # Initialize logger
 logger = logging.getLogger(__name__)
-debug_mode = os.environ.get('DEBUG_MODE', 'false').lower() == 'true'
+debug_mode = os.environ.get("DEBUG_MODE", "false").lower() == "true"
 logging.basicConfig(
     level=logging.DEBUG if debug_mode else logging.INFO,
-    format='%(levelname)s %(asctime)s %(filename)s:%(lineno)d] %(message)s',
-    datefmt='%m-%d %H:%M:%S')
+    format="%(levelname)s %(asctime)s %(filename)s:%(lineno)d] %(message)s",
+    datefmt="%m-%d %H:%M:%S",
+)
 
-CONFIG_YAML = os.environ.get('YAML_FILE_PATH', '/mnt/config/training_config.yaml')
+CONFIG_YAML = os.environ.get("YAML_FILE_PATH", "/mnt/config/training_config.yaml")
 parsed_configs = parse_configs(CONFIG_YAML)
 
-model_config = parsed_configs.get('ModelConfig')
-bnb_config = parsed_configs.get('QuantizationConfig')
-ext_lora_config = parsed_configs.get('LoraConfig')
-ta_args = parsed_configs.get('TrainingArguments')
-ds_config = parsed_configs.get('DatasetConfig')
-dc_args = parsed_configs.get('DataCollator')
+model_config: ModelConfig = parsed_configs.get("ModelConfig")
+bnb_config: BitsAndBytesConfig = parsed_configs.get("QuantizationConfig")
+ext_lora_config: ExtLoraConfig = parsed_configs.get("LoraConfig")
+ta_args: TrainingArguments = parsed_configs.get("TrainingArguments")
+ds_config: DatasetConfig = parsed_configs.get("DatasetConfig")
+dc_args: ExtDataCollator = parsed_configs.get("DataCollator")
 
 accelerator = Accelerator()
 
@@ -101,34 +120,42 @@ if ds_config.shuffle_dataset:
 
 train_dataset, eval_dataset = dm.split_dataset()
 
+
 class EmptyCacheCallback(TrainerCallback):
     def on_step_end(self, args, state: TrainerState, control: TrainerControl, **kwargs):
         torch.cuda.empty_cache()
         return control
+
+
 empty_cache_callback = EmptyCacheCallback()
 
 # Prepare for training
 torch.cuda.set_device(accelerator.process_index)
 torch.cuda.empty_cache()
 # Training the Model
-trainer = accelerator.prepare(SFTTrainer(
-    model=model,
-    tokenizer=tokenizer,
-    train_dataset=train_dataset,
-    eval_dataset=eval_dataset,
-    args=ta_args,
-    data_collator=dc_args,
-    dataset_text_field=dm.dataset_text_field,
-    callbacks=[empty_cache_callback]
-    # metrics = "tensorboard" or "wandb" # TODO
-))
+trainer: SFTTrainer = accelerator.prepare(
+    SFTTrainer(
+        model=model,
+        tokenizer=tokenizer,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        args=ta_args,
+        data_collator=dc_args,
+        dataset_text_field=dm.dataset_text_field,
+        callbacks=[empty_cache_callback],
+        # metrics = "tensorboard" or "wandb" # TODO
+    )
+)
 trainer.train()
 os.makedirs(ta_args.output_dir, exist_ok=True)
-trainer.save_model(ta_args.output_dir)
+# only save the adapter weights
+trainer.model.save_pretrained(ta_args.output_dir)
 
 # Write file to signify training completion
 timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 logger.info("Fine-Tuning completed\n")
-completion_indicator_path = os.path.join(ta_args.output_dir, "fine_tuning_completed.txt")
-with open(completion_indicator_path, 'w') as f:
+completion_indicator_path = os.path.join(
+    ta_args.output_dir, "fine_tuning_completed.txt"
+)
+with open(completion_indicator_path, "w") as f:
     f.write(f"Fine-Tuning completed at {timestamp}\n")

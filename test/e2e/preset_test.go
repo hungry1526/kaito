@@ -1,5 +1,15 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package e2e
 
@@ -20,18 +30,18 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kaitov1beta1 "github.com/kaito-project/kaito/api/v1beta1"
-	"github.com/kaito-project/kaito/pkg/sku"
-	"github.com/kaito-project/kaito/pkg/utils/consts"
 	"github.com/kaito-project/kaito/test/e2e/utils"
 )
 
 const (
-	PresetLlama2AChat                   = "llama-2-7b-chat"
-	PresetLlama2BChat                   = "llama-2-13b-chat"
+	PresetLlama3_1_8BInstruct           = "llama-3.1-8b-instruct"
+	PresetLlama3_3_70BInstruct          = "llama-3.3-70b-instruct"
 	PresetFalcon7BModel                 = "falcon-7b"
 	PresetFalcon40BModel                = "falcon-40b"
 	PresetMistral7BInstructModel        = "mistral-7b-instruct"
@@ -54,20 +64,14 @@ var (
 )
 
 func loadTestEnvVars() {
-	var err error
-	runLlama13B, err = strconv.ParseBool(os.Getenv("RUN_LLAMA_13B"))
-	if err != nil {
-		fmt.Print("Error: RUN_LLAMA_13B ENV Variable not set")
-		runLlama13B = false
-	}
-
 	// Required for Llama models
 	aiModelsRegistry = utils.GetEnv("AI_MODELS_REGISTRY")
 	aiModelsRegistrySecret = utils.GetEnv("AI_MODELS_REGISTRY_SECRET")
 	// Currently required for uploading fine-tuning results
 	e2eACRSecret = utils.GetEnv("E2E_ACR_REGISTRY_SECRET")
 	supportedModelsYamlPath = utils.GetEnv("SUPPORTED_MODELS_YAML_PATH")
-	azureClusterName = utils.GetEnv("AZURE_CLUSTER_NAME")
+	azureClusterName = strings.ToLower(utils.GetEnv("AZURE_CLUSTER_NAME"))
+	hfToken = utils.GetEnv("HF_TOKEN")
 }
 
 func loadModelVersions() {
@@ -89,10 +93,10 @@ func createCustomWorkspaceWithAdapter(numOfNode int, validAdapters []kaitov1beta
 	workspaceObj := &kaitov1beta1.Workspace{}
 	By("Creating a workspace with adapter", func() {
 		uniqueID := fmt.Sprint("preset-falcon-", rand.Intn(1000))
-		workspaceObj = utils.GenerateInferenceWorkspaceManifest(uniqueID, namespaceName, "", numOfNode, "Standard_NC12s_v3",
+		workspaceObj = utils.GenerateInferenceWorkspaceManifest(uniqueID, namespaceName, "", numOfNode, "Standard_NV36ads_A10_v5",
 			&metav1.LabelSelector{
 				MatchLabels: map[string]string{"kaito-workspace": "custom-preset-e2e-test-falcon"},
-			}, nil, PresetFalcon7BModel, kaitov1beta1.ModelImageAccessModePublic, nil, nil, validAdapters)
+			}, nil, PresetFalcon7BModel, nil, nil, validAdapters, "")
 
 		createAndValidateWorkspace(workspaceObj)
 	})
@@ -125,10 +129,10 @@ func createFalconWorkspaceWithPresetPublicMode(numOfNode int) *kaitov1beta1.Work
 	workspaceObj := &kaitov1beta1.Workspace{}
 	By("Creating a workspace CR with Falcon 7B preset public mode", func() {
 		uniqueID := fmt.Sprint("preset-falcon-", rand.Intn(1000))
-		workspaceObj = utils.GenerateInferenceWorkspaceManifest(uniqueID, namespaceName, "", numOfNode, "Standard_NC12s_v3",
+		workspaceObj = utils.GenerateInferenceWorkspaceManifest(uniqueID, namespaceName, "", numOfNode, "Standard_NV36ads_A10_v5",
 			&metav1.LabelSelector{
 				MatchLabels: map[string]string{"kaito-workspace": "public-preset-e2e-test-falcon"},
-			}, nil, PresetFalcon7BModel, kaitov1beta1.ModelImageAccessModePublic, nil, nil, nil)
+			}, nil, PresetFalcon7BModel, nil, nil, nil, "")
 
 		createAndValidateWorkspace(workspaceObj)
 	})
@@ -139,10 +143,10 @@ func createMistralWorkspaceWithPresetPublicMode(numOfNode int) *kaitov1beta1.Wor
 	workspaceObj := &kaitov1beta1.Workspace{}
 	By("Creating a workspace CR with Mistral 7B preset public mode", func() {
 		uniqueID := fmt.Sprint("preset-mistral-", rand.Intn(1000))
-		workspaceObj = utils.GenerateInferenceWorkspaceManifest(uniqueID, namespaceName, "", numOfNode, "Standard_NC12s_v3",
+		workspaceObj = utils.GenerateInferenceWorkspaceManifest(uniqueID, namespaceName, "", numOfNode, "Standard_NV36ads_A10_v5",
 			&metav1.LabelSelector{
 				MatchLabels: map[string]string{"kaito-workspace": "public-preset-e2e-test-mistral"},
-			}, nil, PresetMistral7BInstructModel, kaitov1beta1.ModelImageAccessModePublic, nil, nil, nil)
+			}, nil, PresetMistral7BInstructModel, nil, nil, nil, "")
 
 		createAndValidateWorkspace(workspaceObj)
 	})
@@ -153,38 +157,25 @@ func createPhi2WorkspaceWithPresetPublicMode(numOfNode int) *kaitov1beta1.Worksp
 	workspaceObj := &kaitov1beta1.Workspace{}
 	By("Creating a workspace CR with Phi 2 preset public mode", func() {
 		uniqueID := fmt.Sprint("preset-phi2-", rand.Intn(1000))
-		workspaceObj = utils.GenerateInferenceWorkspaceManifest(uniqueID, namespaceName, "", numOfNode, "Standard_NC6s_v3",
+		workspaceObj = utils.GenerateInferenceWorkspaceManifest(uniqueID, namespaceName, "", numOfNode, "Standard_NV36ads_A10_v5",
 			&metav1.LabelSelector{
 				MatchLabels: map[string]string{"kaito-workspace": "public-preset-e2e-test-phi-2"},
-			}, nil, PresetPhi2Model, kaitov1beta1.ModelImageAccessModePublic, nil, nil, nil)
+			}, nil, PresetPhi2Model, nil, nil, nil, "")
 
 		createAndValidateWorkspace(workspaceObj)
 	})
 	return workspaceObj
 }
 
-func createLlama7BWorkspaceWithPresetPrivateMode(registry, registrySecret, imageVersion string, numOfNode int) *kaitov1beta1.Workspace {
+func createLlama3_1_8BInstructWorkspaceWithPresetPublicMode(numOfNode int) *kaitov1beta1.Workspace {
+	modelSecret := createAndValidateModelSecret()
 	workspaceObj := &kaitov1beta1.Workspace{}
-	By("Creating a workspace CR with Llama 7B Chat preset private mode", func() {
-		uniqueID := fmt.Sprint("preset-llama-", rand.Intn(1000))
-		workspaceObj = utils.GenerateInferenceWorkspaceManifest(uniqueID, namespaceName, fmt.Sprintf("%s/%s:%s", registry, PresetLlama2AChat, imageVersion),
-			numOfNode, "Standard_NC12s_v3", &metav1.LabelSelector{
-				MatchLabels: map[string]string{"kaito-workspace": "private-preset-e2e-test-llama-2-7b"},
-			}, nil, PresetLlama2AChat, kaitov1beta1.ModelImageAccessModePrivate, []string{registrySecret}, nil, nil)
-
-		createAndValidateWorkspace(workspaceObj)
-	})
-	return workspaceObj
-}
-
-func createLlama13BWorkspaceWithPresetPrivateMode(registry, registrySecret, imageVersion string, numOfNode int) *kaitov1beta1.Workspace {
-	workspaceObj := &kaitov1beta1.Workspace{}
-	By("Creating a workspace CR with Llama 13B Chat preset private mode", func() {
-		uniqueID := fmt.Sprint("preset-llama-", rand.Intn(1000))
-		workspaceObj = utils.GenerateInferenceWorkspaceManifest(uniqueID, namespaceName, fmt.Sprintf("%s/%s:%s", registry, PresetLlama2BChat, imageVersion),
-			numOfNode, "Standard_NC12s_v3", &metav1.LabelSelector{
-				MatchLabels: map[string]string{"kaito-workspace": "private-preset-e2e-test-llama-2-13b"},
-			}, nil, PresetLlama2BChat, kaitov1beta1.ModelImageAccessModePrivate, []string{registrySecret}, nil, nil)
+	By("Creating a workspace CR with Llama 3.1-8B Instruct preset public mode", func() {
+		uniqueID := fmt.Sprint("preset-llama3-1-8b-", rand.Intn(1000))
+		workspaceObj = utils.GenerateInferenceWorkspaceManifest(uniqueID, namespaceName, "",
+			numOfNode, "Standard_NV36ads_A10_v5", &metav1.LabelSelector{
+				MatchLabels: map[string]string{"kaito-workspace": "public-preset-e2e-test-llama3-1-8b"},
+			}, nil, PresetLlama3_1_8BInstruct, nil, nil, nil, modelSecret.Name) // Llama 3.1-8B Instruct model requires a model access secret
 
 		createAndValidateWorkspace(workspaceObj)
 	})
@@ -198,7 +189,7 @@ func createCustomWorkspaceWithPresetCustomMode(imageName string, numOfNode int) 
 		workspaceObj = utils.GenerateInferenceWorkspaceManifest(uniqueID, namespaceName, "",
 			numOfNode, "Standard_D4s_v3", &metav1.LabelSelector{
 				MatchLabels: map[string]string{"kaito-workspace": "private-preset-e2e-test-custom"},
-			}, nil, "", utils.InferenceModeCustomTemplate, nil, utils.GeneratePodTemplate(uniqueID, namespaceName, imageName, nil), nil)
+			}, nil, "", nil, utils.GeneratePodTemplate(uniqueID, namespaceName, imageName, nil), nil, "")
 
 		createAndValidateWorkspace(workspaceObj)
 	})
@@ -210,9 +201,9 @@ func createPhi3WorkspaceWithPresetPublicMode(numOfNode int) *kaitov1beta1.Worksp
 	By("Creating a workspace CR with Phi-3-mini-128k-instruct preset public mode", func() {
 		uniqueID := fmt.Sprint("preset-phi3-", rand.Intn(1000))
 		workspaceObj = utils.GenerateInferenceWorkspaceManifest(uniqueID, namespaceName, "",
-			numOfNode, "Standard_NC6s_v3", &metav1.LabelSelector{
+			numOfNode, "Standard_NV36ads_A10_v5", &metav1.LabelSelector{
 				MatchLabels: map[string]string{"kaito-workspace": "public-preset-e2e-test-phi-3-mini-128k-instruct"},
-			}, nil, PresetPhi3Mini128kModel, kaitov1beta1.ModelImageAccessModePublic, nil, nil, nil)
+			}, nil, PresetPhi3Mini128kModel, nil, nil, nil, "")
 
 		createAndValidateWorkspace(workspaceObj)
 	})
@@ -232,7 +223,8 @@ func createCustomTuningConfigMapForE2E() *v1.ConfigMap {
 func createAndValidateConfigMap(configMap *v1.ConfigMap) {
 	By("Creating ConfigMap", func() {
 		Eventually(func() error {
-			return utils.TestingCluster.KubeClient.Create(ctx, configMap, &client.CreateOptions{})
+			err := utils.TestingCluster.KubeClient.Create(ctx, configMap, &client.CreateOptions{})
+			return client.IgnoreAlreadyExists(err)
 		}, utils.PollTimeout, utils.PollInterval).
 			Should(Succeed(), "Failed to create ConfigMap %s", configMap.Name)
 
@@ -246,18 +238,37 @@ func createAndValidateConfigMap(configMap *v1.ConfigMap) {
 	})
 }
 
-func createPhi3TuningWorkspaceWithPresetPublicMode(configMapName string, numOfNode int) (*kaitov1beta1.Workspace, string, string) {
+func createAndValidateModelSecret() *corev1.Secret {
+	modelSecret := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hf-token",
+			Namespace: namespaceName,
+		},
+		Data: map[string][]byte{
+			"HF_TOKEN": []byte(hfToken),
+		},
+	}
+	By("Creating model secret", func() {
+		Eventually(func() error {
+			err := utils.TestingCluster.KubeClient.Create(ctx, &modelSecret, &client.CreateOptions{})
+			return client.IgnoreAlreadyExists(err)
+		}, utils.PollTimeout, utils.PollInterval).Should(Succeed(), "Failed to create model secret")
+	})
+	return &modelSecret
+}
+
+func createPhi3TuningWorkspaceWithPresetPublicMode(configMapName string, numOfNode int, intputVolume, outputVolume *corev1.Volume) (*kaitov1beta1.Workspace, string, string) {
 	workspaceObj := &kaitov1beta1.Workspace{}
 	e2eOutputImageName := fmt.Sprintf("adapter-%s-e2e-test", PresetPhi3Mini128kModel)
 	e2eOutputImageTag := utils.GenerateRandomString()
 	outputRegistryUrl := fmt.Sprintf("%s.azurecr.io/%s:%s", azureClusterName, e2eOutputImageName, e2eOutputImageTag)
 	var uniqueID string
 	By("Creating a workspace Tuning CR with Phi-3 preset public mode", func() {
-		uniqueID = fmt.Sprint("preset-", rand.Intn(1000))
+		uniqueID = fmt.Sprint("preset-tuning-falcon-", rand.Intn(1000))
 		workspaceObj = utils.GenerateE2ETuningWorkspaceManifest(uniqueID, namespaceName, "",
-			fullDatasetImageName1, outputRegistryUrl, numOfNode, "Standard_NC6s_v3", &metav1.LabelSelector{
-				MatchLabels: map[string]string{"kaito-workspace": "public-preset-e2e-test-tuning-falcon"},
-			}, nil, PresetPhi3Mini128kModel, kaitov1beta1.ModelImageAccessModePublic, []string{e2eACRSecret}, configMapName)
+			fullDatasetImageName1, outputRegistryUrl, numOfNode, "Standard_NV36ads_A10_v5", &metav1.LabelSelector{
+				MatchLabels: map[string]string{"kaito-workspace": uniqueID},
+			}, nil, PresetPhi3Mini128kModel, []string{e2eACRSecret}, configMapName, intputVolume, outputVolume)
 
 		createAndValidateWorkspace(workspaceObj)
 	})
@@ -265,8 +276,8 @@ func createPhi3TuningWorkspaceWithPresetPublicMode(configMapName string, numOfNo
 }
 
 func createAndValidateWorkspace(workspaceObj *kaitov1beta1.Workspace) {
+	createConfigForWorkspace(workspaceObj)
 	By("Creating workspace", func() {
-		createConfigForWorkspace(workspaceObj)
 		Eventually(func() error {
 			return utils.TestingCluster.KubeClient.Create(ctx, workspaceObj, &client.CreateOptions{})
 		}, utils.PollTimeout, utils.PollInterval).
@@ -287,11 +298,12 @@ func createConfigForWorkspace(workspaceObj *kaitov1beta1.Workspace) {
 		return
 	}
 
-	handler := sku.GetCloudSKUHandler(consts.AzureCloudName)
-	gpuConfig := handler.GetGPUConfigBySKU(workspaceObj.Resource.InstanceType)
-	if gpuConfig == nil || gpuConfig.GPUCount <= 1 {
-		return
-	}
+	// TODO: uncomment the following lines when A10 GPU support is added
+	// handler := sku.GetCloudSKUHandler(consts.AzureCloudName)
+	// gpuConfig := handler.GetGPUConfigBySKU(workspaceObj.Resource.InstanceType)
+	// if gpuConfig == nil || (gpuConfig.GPUCount <= 1 && lo.FromPtr(workspaceObj.Resource.Count) <= 1) {
+	// 	return
+	// }
 
 	By("Creating config file", func() {
 		cm := corev1.ConfigMap{
@@ -316,17 +328,30 @@ vllm:
 	})
 }
 
-func updatePhi3TuningWorkspaceWithPresetPublicMode(workspaceObj *kaitov1beta1.Workspace, datasetImageName string) (*kaitov1beta1.Workspace, string) {
+func updatePhi3TuningWorkspaceWithPresetPublicMode(workspaceObj *kaitov1beta1.Workspace, datasetImageName string, inputVolume, outputVolume *corev1.Volume) (*kaitov1beta1.Workspace, string) {
 	e2eOutputImageName := fmt.Sprintf("adapter-%s-e2e-test2", PresetPhi3Mini128kModel)
 	e2eOutputImageTag := utils.GenerateRandomString()
 	outputRegistryUrl := fmt.Sprintf("%s.azurecr.io/%s:%s", azureClusterName, e2eOutputImageName, e2eOutputImageTag)
 	By("Updating a workspace Tuning CR with Phi-3 preset public mode. The update includes the tuning input and output configurations for the workspace.", func() {
-		workspaceObj.Tuning.Input = &kaitov1beta1.DataSource{
-			Image: datasetImageName,
+		if inputVolume != nil {
+			workspaceObj.Tuning.Input = &kaitov1beta1.DataSource{
+				Volume: &inputVolume.VolumeSource,
+			}
+		} else {
+			workspaceObj.Tuning.Input = &kaitov1beta1.DataSource{
+				Image:            datasetImageName,
+				ImagePullSecrets: []string{e2eACRSecret},
+			}
 		}
-		workspaceObj.Tuning.Output = &kaitov1beta1.DataDestination{
-			Image:           outputRegistryUrl,
-			ImagePushSecret: e2eACRSecret,
+		if outputVolume != nil {
+			workspaceObj.Tuning.Output = &kaitov1beta1.DataDestination{
+				Volume: &outputVolume.VolumeSource,
+			}
+		} else {
+			workspaceObj.Tuning.Output = &kaitov1beta1.DataDestination{
+				Image:           outputRegistryUrl,
+				ImagePushSecret: e2eACRSecret,
+			}
 		}
 		updateAndValidateWorkspace(workspaceObj)
 	})
@@ -563,7 +588,7 @@ func validateTuningResource(workspaceObj *kaitov1beta1.Workspace) {
 	})
 }
 
-func validateTuningJobInputOutput(workspaceObj *kaitov1beta1.Workspace, inputImage string, outputImage string) {
+func validateTuningJobInputOutput(workspaceObj *kaitov1beta1.Workspace, inputImage string, outputImage string, inputVolume *corev1.Volume, outputVolume *corev1.Volume) {
 	By("Checking the tuning input and output", func() {
 		Eventually(func() bool {
 			var job batchv1.Job
@@ -576,32 +601,58 @@ func validateTuningJobInputOutput(workspaceObj *kaitov1beta1.Workspace, inputIma
 				Expect(err).NotTo(HaveOccurred())
 			}
 
-			var pullerContainer *v1.Container
-			for _, container := range job.Spec.Template.Spec.InitContainers {
-				if strings.HasPrefix(container.Name, "puller") {
-					pullerContainer = &container
-					break
+			if inputVolume != nil {
+				volumeMounted := false
+				for _, volume := range job.Spec.Template.Spec.Volumes {
+					if volume.Name == inputVolume.Name {
+						volumeMounted = true
+					}
+				}
+				if !volumeMounted {
+					GinkgoWriter.Printf("Volume %s not mounted in job spec\n", inputVolume.Name)
+					return false
+				}
+			} else {
+				var pullerContainer *v1.Container
+				for _, container := range job.Spec.Template.Spec.InitContainers {
+					if strings.HasPrefix(container.Name, "puller") {
+						pullerContainer = &container
+						break
+					}
+				}
+
+				pullerSH := pullerContainer.Args[0]
+				if !strings.Contains(pullerSH, fmt.Sprintf("\n[ ! -z \"${IMG_REF}\" ] || IMG_REF='%s'\n", inputImage)) {
+					GinkgoWriter.Printf("Unexpected pullerSH: %s\n", pullerSH)
+					return false
 				}
 			}
 
-			pullerSH := pullerContainer.Args[0]
-			if !strings.Contains(pullerSH, fmt.Sprintf("\n[ ! -z \"${IMG_REF}\" ] || IMG_REF='%s'\n", inputImage)) {
-				GinkgoWriter.Printf("Unexpected pullerSH: %s\n", pullerSH)
-				return false
-			}
-
-			var pusherContainer *v1.Container
-			for _, container := range job.Spec.Template.Spec.Containers {
-				if strings.HasPrefix(container.Name, "pusher") {
-					pusherContainer = &container
-					break
+			if outputVolume != nil {
+				volumeMounted := false
+				for _, volume := range job.Spec.Template.Spec.Volumes {
+					if volume.Name == outputVolume.Name {
+						volumeMounted = true
+					}
 				}
-			}
+				if !volumeMounted {
+					GinkgoWriter.Printf("Volume %s not mounted in job spec\n", outputVolume.Name)
+					return false
+				}
+			} else {
+				var pusherContainer *v1.Container
+				for _, container := range job.Spec.Template.Spec.Containers {
+					if strings.HasPrefix(container.Name, "pusher") {
+						pusherContainer = &container
+						break
+					}
+				}
 
-			pusherSH := pusherContainer.Args[0]
-			if !strings.Contains(pusherSH, fmt.Sprintf("\n[ ! -z \"${IMG_REF}\" ] || IMG_REF='%s'\n", outputImage)) {
-				GinkgoWriter.Printf("Unexpected pusherSH: %s\n", pullerSH)
-				return false
+				pusherSH := pusherContainer.Args[0]
+				if !strings.Contains(pusherSH, fmt.Sprintf("\n[ ! -z \"${IMG_REF}\" ] || IMG_REF='%s'\n", outputImage)) {
+					GinkgoWriter.Printf("Unexpected pusherSH: %s\n", pusherSH)
+					return false
+				}
 			}
 
 			return true
@@ -785,13 +836,212 @@ func deleteWorkspace(workspaceObj *kaitov1beta1.Workspace) error {
 	return nil
 }
 
-var runLlama13B bool
+func createInputDatasetVolume(storageClassName string, datasetImage string) *corev1.Volume {
+	coreClient, err := utils.GetK8sClientset()
+	if err != nil {
+		Fail(fmt.Sprintf("Failed to create core client: %v", err))
+	}
+	pvcName := fmt.Sprintf("input-pvc-%s", string(uuid.NewUUID()))
+	pvc, err := coreClient.CoreV1().PersistentVolumeClaims(namespaceName).Create(ctx, &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pvcName,
+			Namespace: namespaceName,
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceStorage: resource.MustParse("1000Gi"),
+				},
+			},
+			StorageClassName: &storageClassName,
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		Fail(fmt.Sprintf("Failed to create PVC: %v", err))
+	}
+	volumeName := "data-volume"
+	mountPath := "/mnt/data"
+	volumeMount := corev1.VolumeMount{
+		Name:      volumeName,
+		MountPath: mountPath,
+		ReadOnly:  false,
+	}
+	volume := corev1.Volume{
+		Name: volumeName,
+		VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: pvc.Name,
+			},
+		},
+	}
+	podName := fmt.Sprintf("input-pod-%s", string(uuid.NewUUID()))
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podName,
+			Namespace: namespaceName,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:    "e2e-dataset",
+					Image:   datasetImage,
+					Command: []string{"/bin/sh", "-c", "ls -la /data && cp -r /data/* /mnt/data && ls -la /mnt/data"},
+					VolumeMounts: []corev1.VolumeMount{
+						volumeMount,
+					},
+				},
+			},
+			Volumes: []corev1.Volume{
+				volume,
+			},
+		},
+	}
+	_, err = coreClient.CoreV1().Pods(namespaceName).Create(ctx, pod, metav1.CreateOptions{})
+	if err != nil {
+		Fail(fmt.Sprintf("Failed to create Pod: %v", err))
+	}
+	// Wait for the PVC to be bound
+	Eventually(func() bool {
+		pvc, err := coreClient.CoreV1().PersistentVolumeClaims(namespaceName).Get(ctx, pvcName, metav1.GetOptions{})
+		if err != nil {
+			Fail(fmt.Sprintf("Failed to get PVC: %v", err))
+		}
+		return pvc.Status.Phase == corev1.ClaimBound
+	}, 5*time.Minute, 10*time.Second).Should(BeTrue(), "PVC is not bound")
+	// Wait for the Pod to be running
+	Eventually(func() bool {
+		pod, err := coreClient.CoreV1().Pods(namespaceName).Get(ctx, podName, metav1.GetOptions{})
+		if err != nil {
+			Fail(fmt.Sprintf("Failed to get Pod: %v", err))
+		}
+		return pod.Status.Phase == corev1.PodRunning
+	}, 5*time.Minute, 10*time.Second).Should(BeTrue(), "Pod is not running")
+	// Delete the pod to release the PVC
+	err = coreClient.CoreV1().Pods(namespaceName).Delete(ctx, podName, metav1.DeleteOptions{})
+	if err != nil {
+		Fail(fmt.Sprintf("Failed to delete Pod: %v", err))
+	}
+	// Wait for the Pod to be deleted
+	Eventually(func() bool {
+		_, err := coreClient.CoreV1().Pods(namespaceName).Get(ctx, podName, metav1.GetOptions{})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				return true
+			}
+			Fail(fmt.Sprintf("Failed to get Pod: %v", err))
+		}
+		return false
+	}, 5*time.Minute, 10*time.Second).Should(BeTrue(), "Pod is not deleted")
+	return &volume
+}
+
+func createOutputVolume(storageClassName string) *corev1.Volume {
+	coreClient, err := utils.GetK8sClientset()
+	if err != nil {
+		Fail(fmt.Sprintf("Failed to create core client: %v", err))
+	}
+	pvcName := fmt.Sprintf("output-pvc-%s", string(uuid.NewUUID()))
+	pvc, err := coreClient.CoreV1().PersistentVolumeClaims(namespaceName).Create(ctx, &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pvcName,
+			Namespace: namespaceName,
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceStorage: resource.MustParse("1000Gi"),
+				},
+			},
+			StorageClassName: &storageClassName,
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		Fail(fmt.Sprintf("Failed to create PVC: %v", err))
+	}
+	volumeName := "results-volume"
+	mountPath := "/mnt/results"
+	volumeMount := corev1.VolumeMount{
+		Name:      volumeName,
+		MountPath: mountPath,
+		ReadOnly:  false,
+	}
+	volume := corev1.Volume{
+		Name: volumeName,
+		VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: pvc.Name,
+			},
+		},
+	}
+	podName := fmt.Sprintf("output-pod-%s", string(uuid.NewUUID()))
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podName,
+			Namespace: namespaceName,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "e2e-output",
+					Image: "nginx:latest",
+					VolumeMounts: []corev1.VolumeMount{
+						volumeMount,
+					},
+				},
+			},
+			Volumes: []corev1.Volume{
+				volume,
+			},
+		},
+	}
+	_, err = coreClient.CoreV1().Pods(namespaceName).Create(ctx, pod, metav1.CreateOptions{})
+	if err != nil {
+		Fail(fmt.Sprintf("Failed to create Pod: %v", err))
+	}
+	// Wait for the PVC to be bound
+	Eventually(func() bool {
+		pvc, err := coreClient.CoreV1().PersistentVolumeClaims(namespaceName).Get(ctx, pvcName, metav1.GetOptions{})
+		if err != nil {
+			Fail(fmt.Sprintf("Failed to get PVC: %v", err))
+		}
+		return pvc.Status.Phase == corev1.ClaimBound
+	}, 5*time.Minute, 10*time.Second).Should(BeTrue(), "PVC is not bound")
+	// Wait for the Pod to be running
+	Eventually(func() bool {
+		pod, err := coreClient.CoreV1().Pods(namespaceName).Get(ctx, podName, metav1.GetOptions{})
+		if err != nil {
+			Fail(fmt.Sprintf("Failed to get Pod: %v", err))
+		}
+		return pod.Status.Phase == corev1.PodRunning
+	}, 5*time.Minute, 10*time.Second).Should(BeTrue(), "Pod is not running")
+	// Delete the pod to release the PVC
+	err = coreClient.CoreV1().Pods(namespaceName).Delete(ctx, podName, metav1.DeleteOptions{})
+	if err != nil {
+		Fail(fmt.Sprintf("Failed to delete Pod: %v", err))
+	}
+	// Wait for the Pod to be deleted
+	Eventually(func() bool {
+		_, err := coreClient.CoreV1().Pods(namespaceName).Get(ctx, podName, metav1.GetOptions{})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				return true
+			}
+			Fail(fmt.Sprintf("Failed to get Pod: %v", err))
+		}
+		return false
+	}, 5*time.Minute, 10*time.Second).Should(BeTrue(), "Pod is not deleted")
+	return &volume
+}
+
 var aiModelsRegistry string
 var aiModelsRegistrySecret string
 var e2eACRSecret string
 var supportedModelsYamlPath string
 var modelInfo map[string]string
 var azureClusterName string
+var hfToken string
 
 var _ = Describe("Workspace Preset", func() {
 	BeforeEach(func() {
@@ -803,7 +1053,9 @@ var _ = Describe("Workspace Preset", func() {
 		if CurrentSpecReport().Failed() {
 			utils.PrintPodLogsOnFailure(namespaceName, "")     // The Preset Pod
 			utils.PrintPodLogsOnFailure("kaito-workspace", "") // The Kaito Workspace Pod
-			utils.PrintPodLogsOnFailure("gpu-provisioner", "") // The gpu-provisioner Pod
+			if !*skipGPUProvisionerCheck {
+				utils.PrintPodLogsOnFailure("gpu-provisioner", "") // The gpu-provisioner Pod
+			}
 			Fail("Fail threshold reached")
 		}
 	})
@@ -868,13 +1120,9 @@ var _ = Describe("Workspace Preset", func() {
 		validateWorkspaceReadiness(workspaceObj)
 	})
 
-	It("should create a llama 7b workspace with preset private mode successfully", func() {
+	It("should create a llama-3.1-8b-instruct workspace with preset public mode successfully", utils.GinkgoLabelFastCheck, func() {
 		numOfNode := 1
-		modelVersion, ok := modelInfo[PresetLlama2AChat]
-		if !ok {
-			Fail(fmt.Sprintf("Model version for %s not found", PresetLlama2AChat))
-		}
-		workspaceObj := createLlama7BWorkspaceWithPresetPrivateMode(aiModelsRegistry, aiModelsRegistrySecret, modelVersion, numOfNode)
+		workspaceObj := createLlama3_1_8BInstructWorkspaceWithPresetPublicMode(numOfNode)
 
 		defer cleanupResources(workspaceObj)
 		time.Sleep(30 * time.Second)
@@ -888,34 +1136,6 @@ var _ = Describe("Workspace Preset", func() {
 		validateInferenceConfig(workspaceObj)
 
 		validateInferenceResource(workspaceObj, int32(numOfNode), false)
-
-		validateWorkspaceReadiness(workspaceObj)
-	})
-
-	It("should create a llama 13b workspace with preset private mode successfully", func() {
-		if !runLlama13B {
-			Skip("Skipping llama 13b workspace test")
-		}
-		numOfNode := 2
-		modelVersion, ok := modelInfo[PresetLlama2BChat]
-		if !ok {
-			Fail(fmt.Sprintf("Model version for %s not found", PresetLlama2AChat))
-		}
-		workspaceObj := createLlama13BWorkspaceWithPresetPrivateMode(aiModelsRegistry, aiModelsRegistrySecret, modelVersion, numOfNode)
-
-		defer cleanupResources(workspaceObj)
-
-		time.Sleep(30 * time.Second)
-
-		validateCreateNode(workspaceObj, numOfNode)
-		validateResourceStatus(workspaceObj)
-
-		time.Sleep(30 * time.Second)
-
-		validateAssociatedService(workspaceObj)
-		validateInferenceConfig(workspaceObj)
-
-		validateInferenceResource(workspaceObj, int32(numOfNode), true)
 
 		validateWorkspaceReadiness(workspaceObj)
 	})
@@ -961,7 +1181,7 @@ var _ = Describe("Workspace Preset", func() {
 	It("should create a workspace for tuning successfully, and update the workspace with another dataset and output image", utils.GinkgoLabelFastCheck, func() {
 		numOfNode := 1
 		configMap := createCustomTuningConfigMapForE2E()
-		workspaceObj, jobName, outputRegistryUrl1 := createPhi3TuningWorkspaceWithPresetPublicMode(configMap.Name, numOfNode)
+		workspaceObj, jobName, outputRegistryUrl1 := createPhi3TuningWorkspaceWithPresetPublicMode(configMap.Name, numOfNode, nil, nil)
 
 		defer cleanupResources(workspaceObj)
 		time.Sleep(30 * time.Second)
@@ -976,11 +1196,11 @@ var _ = Describe("Workspace Preset", func() {
 
 		validateWorkspaceReadiness(workspaceObj)
 
-		validateTuningJobInputOutput(workspaceObj, fullDatasetImageName1, outputRegistryUrl1)
+		validateTuningJobInputOutput(workspaceObj, fullDatasetImageName1, outputRegistryUrl1, nil, nil)
 
 		validateRevision(workspaceObj, "1")
 
-		workspaceObj, outputRegistryUrl2 := updatePhi3TuningWorkspaceWithPresetPublicMode(workspaceObj, fullDatasetImageName2)
+		workspaceObj, outputRegistryUrl2 := updatePhi3TuningWorkspaceWithPresetPublicMode(workspaceObj, fullDatasetImageName2, nil, nil)
 		validateResourceStatus(workspaceObj)
 
 		time.Sleep(30 * time.Second)
@@ -990,7 +1210,48 @@ var _ = Describe("Workspace Preset", func() {
 
 		validateWorkspaceReadiness(workspaceObj)
 
-		validateTuningJobInputOutput(workspaceObj, fullDatasetImageName2, outputRegistryUrl2)
+		validateTuningJobInputOutput(workspaceObj, fullDatasetImageName2, outputRegistryUrl2, nil, nil)
+
+		validateRevision(workspaceObj, "2")
+	})
+
+	It("should create a workspace for tuning successfully, and update the workspace with another dataset and output image using azuredisk-csi pvc volume", utils.GinkgoLabelFastCheck, func() {
+		numOfNode := 1
+		configMap := createCustomTuningConfigMapForE2E()
+		intputVolume1 := createInputDatasetVolume("managed-csi", fullDatasetImageName1)
+		outputVolume1 := createOutputVolume("managed-csi")
+		workspaceObj, jobName, _ := createPhi3TuningWorkspaceWithPresetPublicMode(configMap.Name, numOfNode, intputVolume1, outputVolume1)
+
+		defer cleanupResources(workspaceObj)
+		time.Sleep(30 * time.Second)
+
+		validateCreateNode(workspaceObj, numOfNode)
+		validateResourceStatus(workspaceObj)
+
+		time.Sleep(30 * time.Second)
+		validateTuningResource(workspaceObj)
+
+		validateACRTuningResultsUploaded(workspaceObj, jobName)
+
+		validateWorkspaceReadiness(workspaceObj)
+
+		validateTuningJobInputOutput(workspaceObj, "", "", intputVolume1, outputVolume1)
+
+		validateRevision(workspaceObj, "1")
+
+		intputVolume2 := createInputDatasetVolume("managed-csi", fullDatasetImageName2)
+		outputVolume2 := createOutputVolume("managed-csi")
+		workspaceObj, _ = updatePhi3TuningWorkspaceWithPresetPublicMode(workspaceObj, fullDatasetImageName2, intputVolume2, outputVolume2)
+		validateResourceStatus(workspaceObj)
+
+		time.Sleep(30 * time.Second)
+		validateTuningResource(workspaceObj)
+
+		validateACRTuningResultsUploaded(workspaceObj, jobName)
+
+		validateWorkspaceReadiness(workspaceObj)
+
+		validateTuningJobInputOutput(workspaceObj, "", "", intputVolume2, outputVolume2)
 
 		validateRevision(workspaceObj, "2")
 	})

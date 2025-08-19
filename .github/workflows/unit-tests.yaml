@@ -1,0 +1,63 @@
+name: Unit Tests
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "**.md", "**.mdx", "**.png", "**.jpg"]
+  pull_request:
+    branches: [main, release-**]
+    paths-ignore: ["docs/**", "**.md", "**.mdx", "**.png", "**.jpg"]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  GO_VERSION: "1.24"
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    environment: unit-tests
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ec9f2d5744a09debf3a187a3f4f675c53b671911 # v2.13.0
+        with:
+          egress-policy: audit
+          disable-sudo: true
+          disable-telemetry: true
+
+      - name: Check out the code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Set up Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@8e57b58e57be52ac95949151e2777ffda8501267 # v5.4.0
+        with:
+          go-version: ${{ env.GO_VERSION  }}
+
+      - name: Generate APIs
+        run: |
+          make generate
+
+      - name: Run unit tests & Generate coverage
+        run: |
+          make unit-test
+          make tuning-metrics-server-test
+
+      - name: Run inference api e2e tests
+        run: |
+          DEVICE=cpu make inference-api-e2e
+
+      - name: Run compare model configs
+        run: |
+          make compare-model-configs    
+
+      - name: Upload Codecov report
+        uses: codecov/codecov-action@18283e04ce6e62d37312384ff67231eb8fd56d24 # v5.4.3
+        with:
+          verbose: true
+          files: ./coverage.txt
+          token: ${{ secrets.CODECOV_TOKEN }}

@@ -1,5 +1,15 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package controllers
 
@@ -11,7 +21,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -118,10 +127,6 @@ func (c *RAGEngineReconciler) addRAGEngine(ctx context.Context, ragEngineObj *ka
 			klog.ErrorS(updateErr, "failed to update ragengine status", "ragengine", klog.KObj(ragEngineObj))
 			return reconcile.Result{}, updateErr
 		}
-		// if error is	due to machine/nodeClaim instance types unavailability, stop reconcile.
-		if err.Error() == consts.ErrorInstanceTypesUnavailable {
-			return reconcile.Result{Requeue: false}, err
-		}
 		return reconcile.Result{}, err
 	}
 	if err := c.ensureService(ctx, ragEngineObj); err != nil {
@@ -174,7 +179,7 @@ func (c *RAGEngineReconciler) ensureService(ctx context.Context, ragObj *kaitov1
 	} else {
 		return nil
 	}
-	serviceObj := manifests.GenerateRAGServiceManifest(ctx, ragObj, serviceName, serviceType)
+	serviceObj := manifests.GenerateRAGServiceManifest(ragObj, serviceName, serviceType)
 	if err := resources.CreateResource(ctx, serviceObj, c.Client); err != nil {
 		return err
 	}
@@ -384,7 +389,8 @@ func (c *RAGEngineReconciler) applyRAGEngineResource(ctx context.Context, ragEng
 	}
 
 	// Ensure all gpu plugins are running successfully.
-	if strings.Contains(ragEngineObj.Spec.Compute.InstanceType, consts.GpuSkuPrefix) { // GPU skus
+	knownGPUConfig, _ := utils.GetGPUConfigBySKU(ragEngineObj.Spec.Compute.InstanceType)
+	if len(ragEngineObj.Spec.Compute.PreferredNodes) == 0 && knownGPUConfig != nil {
 		for i := range selectedNodes {
 			err = c.ensureNodePlugins(ctx, ragEngineObj, selectedNodes[i])
 			if err != nil {
@@ -476,7 +482,7 @@ func (c *RAGEngineReconciler) createAndValidateNode(ctx context.Context, ragEngi
 	var nodeOSDiskSize string
 
 	if nodeOSDiskSize == "" {
-		nodeOSDiskSize = "0" // The default OS size is used
+		nodeOSDiskSize = "200Gi" // The default OS size is used
 	}
 	return c.CreateNodeClaim(ctx, ragEngineObj, nodeOSDiskSize)
 }
@@ -529,22 +535,30 @@ func (c *RAGEngineReconciler) ensureNodePlugins(ctx context.Context, ragEngineOb
 		case <-tick.C():
 			return fmt.Errorf("node plugin installation timed out. node %s is not ready", nodeObj.Name)
 		default:
-			//Nvidia Plugin
-			if found := resources.CheckNvidiaPlugin(ctx, nodeObj); !found {
-				if err := resources.UpdateNodeWithLabel(ctx, nodeObj.Name, resources.LabelKeyNvidia, resources.LabelValueNvidia, c.Client); err != nil {
-					if apierrors.IsNotFound(err) {
-						klog.ErrorS(err, "nvidia plugin cannot be installed, node not found", "node", nodeObj.Name)
-						if updateErr := c.updateStatusConditionIfNotMatch(ctx, ragEngineObj, kaitov1alpha1.ConditionTypeNodeClaimStatus, metav1.ConditionFalse,
-							"checkNodeClaimStatusFailed", err.Error()); updateErr != nil {
-							klog.ErrorS(updateErr, "failed to update ragengine status", "ragengine", klog.KObj(ragEngineObj))
-							return updateErr
-						}
-						return err
-					}
-				}
-				time.Sleep(1 * time.Second)
+			// get fresh node object
+			freshNode, err := resources.GetNode(ctx, nodeObj.Name, c.Client)
+			if err != nil {
+				klog.ErrorS(err, "cannot get node", "node", nodeObj.Name)
+				return err
 			}
-			return nil
+
+			//Nvidia Plugin
+			if found := resources.CheckNvidiaPlugin(ctx, freshNode); found {
+				return nil
+			}
+
+			err = resources.UpdateNodeWithLabel(ctx, freshNode, resources.LabelKeyNvidia, resources.LabelValueNvidia, c.Client)
+			if apierrors.IsNotFound(err) {
+				klog.ErrorS(err, "nvidia plugin cannot be installed, node not found", "node", freshNode.Name)
+				if updateErr := c.updateStatusConditionIfNotMatch(ctx, ragEngineObj, kaitov1alpha1.ConditionTypeNodeClaimStatus, metav1.ConditionFalse,
+					"checkNodeClaimStatusFailed", err.Error()); updateErr != nil {
+					klog.ErrorS(updateErr, "failed to update workspace status", "workspace", klog.KObj(ragEngineObj))
+					return updateErr
+				}
+				return err
+			}
+
+			time.Sleep(1 * time.Second)
 		}
 	}
 }
@@ -552,13 +566,7 @@ func (c *RAGEngineReconciler) ensureNodePlugins(ctx context.Context, ragEngineOb
 // SetupWithManager sets up the controller with the Manager.
 func (c *RAGEngineReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	c.Recorder = mgr.GetEventRecorderFor("RAGEngine")
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &corev1.Pod{},
-		"spec.nodeName", func(rawObj client.Object) []string {
-			pod := rawObj.(*corev1.Pod)
-			return []string{pod.Spec.NodeName}
-		}); err != nil {
-		return err
-	}
+
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&kaitov1alpha1.RAGEngine{}).
 		Owns(&appsv1.ControllerRevision{}).

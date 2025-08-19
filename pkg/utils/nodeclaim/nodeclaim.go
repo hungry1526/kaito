@@ -1,5 +1,15 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package nodeclaim
 
@@ -29,10 +39,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	karpenterv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	kaitov1alpha1 "github.com/kaito-project/kaito/api/v1alpha1"
 	kaitov1beta1 "github.com/kaito-project/kaito/api/v1beta1"
+	"github.com/kaito-project/kaito/pkg/featuregates"
 	"github.com/kaito-project/kaito/pkg/utils/consts"
 	"github.com/kaito-project/kaito/pkg/utils/resources"
 )
@@ -151,7 +163,7 @@ func GenerateNodeClaimManifest(storageRequirement string, obj client.Object) *ka
 			},
 			Resources: karpenterv1.ResourceRequirements{
 				Requests: v1.ResourceList{
-					v1.ResourceEphemeralStorage: resource.MustParse(storageRequirement),
+					v1.ResourceStorage: resource.MustParse(storageRequirement),
 				},
 			},
 		},
@@ -243,34 +255,14 @@ func GenerateEC2NodeClassManifest(ctx context.Context) *awsv1beta1.EC2NodeClass 
 // CreateNodeClaim creates a nodeClaim object.
 func CreateNodeClaim(ctx context.Context, nodeClaimObj *karpenterv1.NodeClaim, kubeClient client.Client) error {
 	klog.InfoS("CreateNodeClaim", "nodeClaim", klog.KObj(nodeClaimObj))
-	return retry.OnError(retry.DefaultBackoff, func(err error) bool {
-		return err.Error() != consts.ErrorInstanceTypesUnavailable
-	}, func() error {
+	if featuregates.FeatureGates[consts.FeatureFlagEnsureNodeClass] {
 		err := CheckNodeClass(ctx, kubeClient)
 		if err != nil {
 			return err
 		}
+	}
 
-		err = kubeClient.Create(ctx, nodeClaimObj.DeepCopy(), &client.CreateOptions{})
-		if err != nil {
-			return err
-		}
-		time.Sleep(1 * time.Second)
-
-		updatedObj := &karpenterv1.NodeClaim{}
-		err = kubeClient.Get(ctx, client.ObjectKey{Name: nodeClaimObj.Name, Namespace: nodeClaimObj.Namespace}, updatedObj, &client.GetOptions{})
-
-		// if SKU is not available, then exit.
-		_, conditionFound := lo.Find(updatedObj.GetConditions(), func(condition status.Condition) bool {
-			return condition.Type == karpenterv1.ConditionTypeLaunched &&
-				condition.Status == metav1.ConditionFalse && strings.Contains(condition.Message, consts.ErrorInstanceTypesUnavailable)
-		})
-		if conditionFound {
-			klog.Error(consts.ErrorInstanceTypesUnavailable, "reconcile will not continue")
-			return fmt.Errorf(consts.ErrorInstanceTypesUnavailable)
-		}
-		return err
-	})
+	return kubeClient.Create(ctx, nodeClaimObj, &client.CreateOptions{})
 }
 
 // CreateKarpenterNodeClass creates a nodeClass object for Karpenter.
@@ -386,8 +378,18 @@ func CheckNodeClaimStatus(ctx context.Context, nodeClaimObj *karpenterv1.NodeCla
 				return err
 			}
 
-			// if nodeClaim is not ready, then continue.
+			// if SKU is not available, then no need to retry.
 			_, conditionFound := lo.Find(nodeClaimObj.GetConditions(), func(condition status.Condition) bool {
+				return condition.Type == karpenterv1.ConditionTypeLaunched &&
+					condition.Status == metav1.ConditionFalse && strings.Contains(condition.Message, consts.ErrorInstanceTypesUnavailable)
+			})
+			if conditionFound {
+				klog.Error(consts.ErrorInstanceTypesUnavailable, "reconcile will not continue")
+				return reconcile.TerminalError(fmt.Errorf(consts.ErrorInstanceTypesUnavailable))
+			}
+
+			// if nodeClaim is not ready, then continue.
+			_, conditionFound = lo.Find(nodeClaimObj.GetConditions(), func(condition status.Condition) bool {
 				return condition.Type == string(apis.ConditionReady) &&
 					condition.Status == metav1.ConditionTrue
 			})

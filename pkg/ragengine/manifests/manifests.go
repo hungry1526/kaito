@@ -1,11 +1,19 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package manifests
 
 import (
-	"context"
-
 	"github.com/samber/lo"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -15,9 +23,7 @@ import (
 	kaitov1alpha1 "github.com/kaito-project/kaito/api/v1alpha1"
 )
 
-var controller = true
-
-func GenerateRAGDeploymentManifest(ctx context.Context, ragEngineObj *kaitov1alpha1.RAGEngine, revisionNum string, imageName string,
+func GenerateRAGDeploymentManifest(ragEngineObj *kaitov1alpha1.RAGEngine, revisionNum string, imageName string,
 	imagePullSecretRefs []corev1.LocalObjectReference, replicas int, commands []string, containerPorts []corev1.ContainerPort,
 	livenessProbe, readinessProbe *corev1.Probe, resourceRequirements corev1.ResourceRequirements,
 	tolerations []corev1.Toleration, volumes []corev1.Volume, volumeMount []corev1.VolumeMount) *appsv1.Deployment {
@@ -46,13 +52,7 @@ func GenerateRAGDeploymentManifest(ctx context.Context, ragEngineObj *kaitov1alp
 			Name:      ragEngineObj.Name,
 			Namespace: ragEngineObj.Namespace,
 			OwnerReferences: []v1.OwnerReference{
-				{
-					APIVersion: kaitov1alpha1.GroupVersion.String(),
-					Kind:       "RAGEngine",
-					UID:        ragEngineObj.UID,
-					Name:       ragEngineObj.Name,
-					Controller: &controller,
-				},
+				*v1.NewControllerRef(ragEngineObj, kaitov1alpha1.GroupVersion.WithKind("RAGEngine")),
 			},
 			Annotations: map[string]string{
 				kaitov1alpha1.RAGEngineRevisionAnnotation: revisionNum,
@@ -173,7 +173,7 @@ func RAGSetEnv(ragEngineObj *kaitov1alpha1.RAGEngine) []corev1.EnvVar {
 	return envs
 }
 
-func GenerateRAGServiceManifest(ctx context.Context, ragObj *kaitov1alpha1.RAGEngine, serviceName string, serviceType corev1.ServiceType) *corev1.Service {
+func GenerateRAGServiceManifest(ragObj *kaitov1alpha1.RAGEngine, serviceName string, serviceType corev1.ServiceType) *corev1.Service {
 	selector := map[string]string{
 		kaitov1alpha1.LabelRAGEngineName: ragObj.Name,
 	}
@@ -192,13 +192,7 @@ func GenerateRAGServiceManifest(ctx context.Context, ragObj *kaitov1alpha1.RAGEn
 			Name:      serviceName,
 			Namespace: ragObj.Namespace,
 			OwnerReferences: []v1.OwnerReference{
-				{
-					APIVersion: kaitov1alpha1.GroupVersion.String(),
-					Kind:       "RAGEngine",
-					UID:        ragObj.UID,
-					Name:       ragObj.Name,
-					Controller: &controller,
-				},
+				*v1.NewControllerRef(ragObj, kaitov1alpha1.GroupVersion.WithKind("RAGEngine")),
 			},
 		},
 		Spec: corev1.ServiceSpec{

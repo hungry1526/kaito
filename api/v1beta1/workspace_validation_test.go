@@ -1,5 +1,15 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package v1beta1
 
@@ -85,46 +95,44 @@ func (*testModelStatic) SupportTuning() bool {
 	return true
 }
 
-type testModelPrivate struct{}
+type testModelDownload struct{}
 
-func (*testModelPrivate) GetInferenceParameters() *model.PresetParam {
+func (*testModelDownload) GetInferenceParameters() *model.PresetParam {
 	return &model.PresetParam{
-		ImageAccessMode:           string(ModelImageAccessModePrivate),
-		GPUCountRequirement:       gpuCountRequirement,
-		TotalGPUMemoryRequirement: totalGPUMemoryRequirement,
-		PerGPUMemoryRequirement:   perGPUMemoryRequirement,
+		Metadata: model.Metadata{
+			Version:           "https://huggingface.co/test-repo/test-model/commit/test-revision",
+			DownloadAtRuntime: true,
+		},
+		GPUCountRequirement:       "2",
+		TotalGPUMemoryRequirement: "32Gi",
+		PerGPUMemoryRequirement:   "16Gi",
 	}
 }
-func (*testModelPrivate) GetTuningParameters() *model.PresetParam {
-	return &model.PresetParam{
-		ImageAccessMode:           string(ModelImageAccessModePrivate),
-		GPUCountRequirement:       gpuCountRequirement,
-		TotalGPUMemoryRequirement: totalGPUMemoryRequirement,
-		PerGPUMemoryRequirement:   perGPUMemoryRequirement,
-	}
+func (*testModelDownload) GetTuningParameters() *model.PresetParam {
+	return nil
 }
-func (*testModelPrivate) SupportDistributedInference() bool {
-	return false
-}
-func (*testModelPrivate) SupportTuning() bool {
+func (*testModelDownload) SupportDistributedInference() bool {
 	return true
+}
+func (*testModelDownload) SupportTuning() bool {
+	return false
 }
 
 func RegisterValidationTestModels() {
 	var test testModel
-	var testPrivate testModelPrivate
 	var testStatic testModelStatic
+	var testDownload testModelDownload
 	plugin.KaitoModelRegister.Register(&plugin.Registration{
 		Name:     "test-validation",
 		Instance: &test,
 	})
 	plugin.KaitoModelRegister.Register(&plugin.Registration{
-		Name:     "private-test-validation",
-		Instance: &testPrivate,
-	})
-	plugin.KaitoModelRegister.Register(&plugin.Registration{
 		Name:     "test-validation-static",
 		Instance: &testStatic,
+	})
+	plugin.KaitoModelRegister.Register(&plugin.Registration{
+		Name:     "test-validation-download",
+		Instance: &testDownload,
 	})
 }
 
@@ -249,6 +257,7 @@ func TestResourceSpecValidateCreate(t *testing.T) {
 		modelTotalGPUMemory string
 		preset              bool
 		presetNameOverride  string
+		runtime             model.RuntimeName
 		errContent          string // Content expect error to include, if any
 		expectErrs          bool
 		validateTuning      bool // To indicate if we are testing tuning validation
@@ -263,6 +272,7 @@ func TestResourceSpecValidateCreate(t *testing.T) {
 			modelPerGPUMemory:   "19Gi",
 			modelTotalGPUMemory: "152Gi",
 			preset:              true,
+			runtime:             model.RuntimeNameVLLM,
 			errContent:          "",
 			expectErrs:          false,
 			validateTuning:      false,
@@ -277,6 +287,7 @@ func TestResourceSpecValidateCreate(t *testing.T) {
 			modelPerGPUMemory:   "16Gi",
 			modelTotalGPUMemory: "16Gi",
 			preset:              true,
+			runtime:             model.RuntimeNameVLLM,
 			errContent:          "",
 			expectErrs:          false,
 			validateTuning:      false,
@@ -291,6 +302,7 @@ func TestResourceSpecValidateCreate(t *testing.T) {
 			modelPerGPUMemory:   "0",
 			modelTotalGPUMemory: "14Gi",
 			preset:              true,
+			runtime:             model.RuntimeNameVLLM,
 			errContent:          "Insufficient total GPU memory",
 			expectErrs:          true,
 			validateTuning:      false,
@@ -306,6 +318,7 @@ func TestResourceSpecValidateCreate(t *testing.T) {
 			modelPerGPUMemory:   "15Gi",
 			modelTotalGPUMemory: "30Gi",
 			preset:              true,
+			runtime:             model.RuntimeNameVLLM,
 			errContent:          "Insufficient number of GPUs",
 			expectErrs:          true,
 			validateTuning:      false,
@@ -320,6 +333,7 @@ func TestResourceSpecValidateCreate(t *testing.T) {
 			modelPerGPUMemory:   "15Gi",
 			modelTotalGPUMemory: "15Gi",
 			preset:              true,
+			runtime:             model.RuntimeNameVLLM,
 			errContent:          "Insufficient per GPU memory",
 			expectErrs:          true,
 			validateTuning:      false,
@@ -331,6 +345,7 @@ func TestResourceSpecValidateCreate(t *testing.T) {
 				InstanceType: "Standard_invalid_sku",
 				Count:        pointerToInt(1),
 			},
+			runtime:        model.RuntimeNameVLLM,
 			errContent:     "Unsupported instance",
 			expectErrs:     true,
 			validateTuning: false,
@@ -342,6 +357,7 @@ func TestResourceSpecValidateCreate(t *testing.T) {
 				Count:        pointerToInt(1),
 			},
 			preset:         false,
+			runtime:        model.RuntimeNameVLLM,
 			errContent:     "",
 			expectErrs:     false,
 			validateTuning: false,
@@ -352,6 +368,7 @@ func TestResourceSpecValidateCreate(t *testing.T) {
 				InstanceType: "Standard_Nsku",
 				Count:        pointerToInt(1),
 			},
+			runtime:        model.RuntimeNameVLLM,
 			errContent:     "",
 			expectErrs:     false,
 			validateTuning: false,
@@ -363,6 +380,7 @@ func TestResourceSpecValidateCreate(t *testing.T) {
 				InstanceType: "Standard_Dsku",
 				Count:        pointerToInt(1),
 			},
+			runtime:        model.RuntimeNameVLLM,
 			errContent:     "",
 			expectErrs:     false,
 			validateTuning: false,
@@ -373,6 +391,7 @@ func TestResourceSpecValidateCreate(t *testing.T) {
 				InstanceType: "Standard_NC6s_v3",
 				Count:        pointerToInt(1),
 			},
+			runtime:        model.RuntimeNameVLLM,
 			errContent:     "",
 			expectErrs:     false,
 			validateTuning: true,
@@ -383,6 +402,7 @@ func TestResourceSpecValidateCreate(t *testing.T) {
 				InstanceType: "Standard_NC6s_v3",
 				Count:        pointerToInt(2),
 			},
+			runtime:        model.RuntimeNameVLLM,
 			errContent:     "Tuning does not currently support multinode configurations",
 			expectErrs:     true,
 			validateTuning: true,
@@ -396,7 +416,31 @@ func TestResourceSpecValidateCreate(t *testing.T) {
 			errContent:         "",
 			preset:             true,
 			presetNameOverride: "Invalid-Preset-Name",
+			runtime:            model.RuntimeNameVLLM,
 			expectErrs:         false,
+		},
+		{
+			name: "vLLM + Distributed Inference",
+			resourceSpec: &ResourceSpec{
+				InstanceType: "Standard_NC6s_v3",
+				Count:        pointerToInt(4),
+			},
+			preset:             true,
+			presetNameOverride: "test-validation-download",
+			runtime:            model.RuntimeNameVLLM,
+			expectErrs:         false,
+		},
+		{
+			name: "HuggingFace Transformers + Distributed Inference",
+			resourceSpec: &ResourceSpec{
+				InstanceType: "Standard_NC6s_v3",
+				Count:        pointerToInt(4),
+			},
+			preset:             true,
+			presetNameOverride: "test-validation-download",
+			runtime:            model.RuntimeNameHuggingfaceTransformers,
+			expectErrs:         true,
+			errContent:         "Multi-node distributed inference is not supported with Huggingface Transformers runtime",
 		},
 	}
 
@@ -444,7 +488,7 @@ func TestResourceSpecValidateCreate(t *testing.T) {
 				totalGPUMemoryRequirement = tc.modelTotalGPUMemory
 				perGPUMemoryRequirement = tc.modelPerGPUMemory
 
-				errs := tc.resourceSpec.validateCreateWithInference(&spec, false)
+				errs := tc.resourceSpec.validateCreateWithInference(&spec, false, tc.runtime)
 				hasErrs := errs != nil
 				if hasErrs != tc.expectErrs {
 					t.Errorf("validateCreate() errors = %v, expectErrs %v", errs, tc.expectErrs)
@@ -622,40 +666,12 @@ func TestInferenceSpecValidateCreate(t *testing.T) {
 			expectErrs: true,
 		},
 		{
-			name: "Private Access Without Image",
-			inferenceSpec: &InferenceSpec{
-				Preset: &PresetSpec{
-					PresetMeta: PresetMeta{
-						Name:       ModelName("test-validation"),
-						AccessMode: ModelImageAccessModePrivate,
-					},
-					PresetOptions: PresetOptions{},
-				},
-			},
-			errContent: "When AccessMode is private, an image must be provided",
-			expectErrs: true,
-		},
-		{
-			name: "Private Preset With Public AccessMode",
-			inferenceSpec: &InferenceSpec{
-				Preset: &PresetSpec{
-					PresetMeta: PresetMeta{
-						Name: ModelName("private-test-validation"),
-					},
-					PresetOptions: PresetOptions{},
-				},
-			},
-			errContent: "This preset only supports private AccessMode, AccessMode must be private to continue",
-			expectErrs: true,
-		},
-		{
 			name: "Adapeters more than 10",
 			inferenceSpec: func() *InferenceSpec {
 				spec := &InferenceSpec{
 					Preset: &PresetSpec{
 						PresetMeta: PresetMeta{
-							Name:       ModelName("test-validation"),
-							AccessMode: ModelImageAccessModePublic,
+							Name: ModelName("test-validation"),
 						},
 					},
 				}
@@ -679,8 +695,7 @@ func TestInferenceSpecValidateCreate(t *testing.T) {
 				spec := &InferenceSpec{
 					Preset: &PresetSpec{
 						PresetMeta: PresetMeta{
-							Name:       ModelName("test-validation"),
-							AccessMode: ModelImageAccessModePublic,
+							Name: ModelName("test-validation"),
 						},
 					},
 				}
@@ -701,8 +716,7 @@ func TestInferenceSpecValidateCreate(t *testing.T) {
 				spec := &InferenceSpec{
 					Preset: &PresetSpec{
 						PresetMeta: PresetMeta{
-							Name:       ModelName("test-validation"),
-							AccessMode: ModelImageAccessModePublic,
+							Name: ModelName("test-validation"),
 						},
 					},
 				}
@@ -725,8 +739,7 @@ func TestInferenceSpecValidateCreate(t *testing.T) {
 				spec := &InferenceSpec{
 					Preset: &PresetSpec{
 						PresetMeta: PresetMeta{
-							Name:       ModelName("test-validation"),
-							AccessMode: ModelImageAccessModePublic,
+							Name: ModelName("test-validation"),
 						},
 					},
 				}
@@ -750,8 +763,7 @@ func TestInferenceSpecValidateCreate(t *testing.T) {
 				spec := &InferenceSpec{
 					Preset: &PresetSpec{
 						PresetMeta: PresetMeta{
-							Name:       ModelName("test-validation"),
-							AccessMode: ModelImageAccessModePublic,
+							Name: ModelName("test-validation"),
 						},
 					},
 				}
@@ -774,8 +786,7 @@ func TestInferenceSpecValidateCreate(t *testing.T) {
 			inferenceSpec: &InferenceSpec{
 				Preset: &PresetSpec{
 					PresetMeta: PresetMeta{
-						Name:       ModelName("test-validation"),
-						AccessMode: ModelImageAccessModePublic,
+						Name: ModelName("test-validation"),
 					},
 				},
 			},
@@ -783,26 +794,11 @@ func TestInferenceSpecValidateCreate(t *testing.T) {
 			expectErrs: false,
 		},
 		{
-			name: "Config specified but ConfigMap not found",
-			inferenceSpec: &InferenceSpec{
-				Preset: &PresetSpec{
-					PresetMeta: PresetMeta{
-						Name:       ModelName("test-validation"),
-						AccessMode: ModelImageAccessModePublic,
-					},
-				},
-				Config: "nonexistent-config",
-			},
-			errContent: "ConfigMap 'nonexistent-config' specified in 'config' not found in namespace",
-			expectErrs: true,
-		},
-		{
 			name: "Config specified with valid ConfigMap",
 			inferenceSpec: &InferenceSpec{
 				Preset: &PresetSpec{
 					PresetMeta: PresetMeta{
-						Name:       ModelName("test-validation"),
-						AccessMode: ModelImageAccessModePublic,
+						Name: ModelName("test-validation"),
 					},
 				},
 				Config: "valid-config",
@@ -811,31 +807,44 @@ func TestInferenceSpecValidateCreate(t *testing.T) {
 			expectErrs: false,
 		},
 		{
-			name: "ConfigMap missing required inference_config.yaml",
+			name: "download model at runtime with access secret",
 			inferenceSpec: &InferenceSpec{
 				Preset: &PresetSpec{
 					PresetMeta: PresetMeta{
-						Name:       ModelName("test-validation"),
-						AccessMode: ModelImageAccessModePublic,
+						Name: ModelName("test-validation-download"),
+					},
+					PresetOptions: PresetOptions{
+						ModelAccessSecret: "test-secret",
 					},
 				},
-				Config: "missing-key-config",
 			},
-			errContent: "missing field(s): inference_config.yaml in ConfigMap",
+		},
+		{
+			name: "download model at runtime but no access secret",
+			inferenceSpec: &InferenceSpec{
+				Preset: &PresetSpec{
+					PresetMeta: PresetMeta{
+						Name: ModelName("test-validation-download"),
+					},
+				},
+			},
+			errContent: "This preset requires a modelAccessSecret with HF_TOKEN key under presetOptions to download the model",
 			expectErrs: true,
 		},
 		{
-			name: "ConfigMap missing required inference_config.yaml/transformers",
+			name: "Preset with model weights packaged but with access secret",
 			inferenceSpec: &InferenceSpec{
 				Preset: &PresetSpec{
 					PresetMeta: PresetMeta{
-						Name:       ModelName("test-validation"),
-						AccessMode: ModelImageAccessModePublic,
+						Name: ModelName("test-validation"),
+					},
+					PresetOptions: PresetOptions{
+						ModelAccessSecret: "test-secret",
 					},
 				},
-				Config: "missing-key-config",
 			},
-			runtimeName: model.RuntimeNameHuggingfaceTransformers,
+			errContent: "This preset does not require a modelAccessSecret with HF_TOKEN key under presetOptions",
+			expectErrs: true,
 		},
 	}
 
@@ -859,7 +868,7 @@ func TestInferenceSpecValidateCreate(t *testing.T) {
 			if tc.runtimeName != "" {
 				runtime = tc.runtimeName
 			}
-			errs := tc.inferenceSpec.validateCreate(ctx, DefaultReleaseNamespace, "Standard_NC24ads_A100_v4", runtime)
+			errs := tc.inferenceSpec.validateCreate(ctx, runtime)
 			hasErrs := errs != nil
 			if hasErrs != tc.expectErrs {
 				t.Errorf("validateCreate() errors = %v, expectErrs %v", errs, tc.expectErrs)
@@ -1503,7 +1512,7 @@ func TestDataSourceValidateCreate(t *testing.T) {
 		{
 			name: "Volume specified only",
 			dataSource: &DataSource{
-				Image: "kaito.azurecr.io/test:0.0.0",
+				Volume: &v1.VolumeSource{},
 			},
 			wantErr: false,
 		},
@@ -1545,15 +1554,15 @@ func TestDataSourceValidateCreate(t *testing.T) {
 			wantErr:    true,
 			errField:   "Exactly one of URLs, Volume, or Image must be specified",
 		},
-		// {
-		// 	name: "URLs and Volume specified",
-		// 	dataSource: &DataSource{
-		// 		URLs:   []string{"http://example.com/data"},
-		// 		Volume: &v1.VolumeSource{},
-		// 	},
-		// 	wantErr:  true,
-		// 	errField: "Exactly one of URLs, Volume, or Image must be specified",
-		// },
+		{
+			name: "URLs and Volume specified",
+			dataSource: &DataSource{
+				URLs:   []string{"http://example.com/data"},
+				Volume: &v1.VolumeSource{},
+			},
+			wantErr:  true,
+			errField: "Exactly one of URLs, Volume, or Image must be specified",
+		},
 		{
 			name: "All fields specified",
 			dataSource: &DataSource{
@@ -1659,15 +1668,15 @@ func TestDataDestinationValidateCreate(t *testing.T) {
 			name:            "No fields specified",
 			dataDestination: &DataDestination{},
 			wantErr:         true,
-			errField:        "At least one of Volume or Image must be specified",
+			errField:        "Exactly one of Volume or Image must be specified",
 		},
-		// {
-		// 	name: "Volume specified only",
-		// 	dataDestination: &DataDestination{
-		// 		Volume: &v1.VolumeSource{},
-		// 	},
-		// 	wantErr: false,
-		// },
+		{
+			name: "Volume specified only",
+			dataDestination: &DataDestination{
+				Volume: &v1.VolumeSource{},
+			},
+			wantErr: false,
+		},
 		{
 			name: "Image specified only",
 			dataDestination: &DataDestination{
@@ -1701,15 +1710,16 @@ func TestDataDestinationValidateCreate(t *testing.T) {
 			wantErr:  true,
 			errField: "invalid reference format",
 		},
-		// {
-		// 	name: "Both fields specified",
-		// 	dataDestination: &DataDestination{
-		// 		Volume:          &v1.VolumeSource{},
-		// 		Image:           "aimodels.azurecr.io/data-image:latest",
-		// 		ImagePushSecret: "imagePushSecret",
-		// 	},
-		// 	wantErr: false,
-		// },
+		{
+			name: "Both fields specified",
+			dataDestination: &DataDestination{
+				Volume:          &v1.VolumeSource{},
+				Image:           "aimodels.azurecr.io/data-image:latest",
+				ImagePushSecret: "imagePushSecret",
+			},
+			wantErr:  true,
+			errField: "Exactly one of Volume or Image must be specified",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1786,6 +1796,10 @@ func TestInferenceConfigMapValidation(t *testing.T) {
 	RegisterValidationTestModels()
 	ctx := context.Background()
 
+	// Set environment variables
+	t.Setenv("CLOUD_PROVIDER", consts.AzureCloudName)
+	t.Setenv(consts.DefaultReleaseNamespaceEnvVar, DefaultReleaseNamespace)
+
 	// Create fake client with test ConfigMaps
 	scheme := runtime.NewScheme()
 	_ = v1.AddToScheme(scheme)
@@ -1845,137 +1859,202 @@ other_field: value
 	k8sclient.SetGlobalClient(client)
 
 	tests := []struct {
-		name          string
-		inferenceSpec *InferenceSpec
-		resourceSpec  *ResourceSpec
-		runtimeName   model.RuntimeName
-		errContent    string // Content expected error to include, if any
-		expectErrs    bool
+		name       string
+		workspace  *Workspace
+		errContent string // Content expected error to include, if any
+		expectErrs bool
 	}{
 		{
-			name: "Multi-GPU with <20GB per GPU and max-model-len set",
-			inferenceSpec: &InferenceSpec{
-				Preset: &PresetSpec{
-					PresetMeta: PresetMeta{
-						Name: ModelName("test-validation"),
-					},
+			name: "Single Instance, Multi-GPU with <20GB per GPU and max-model-len set",
+			workspace: &Workspace{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: DefaultReleaseNamespace,
 				},
-				Config: "valid-config-with-max-model-len",
-			},
-			resourceSpec: &ResourceSpec{
-				InstanceType: "Standard_NV12", // 2 GPUs with 8GB each (16GB total)
-				Count:        pointerToInt(1),
+				Inference: &InferenceSpec{
+					Preset: &PresetSpec{
+						PresetMeta: PresetMeta{
+							Name: ModelName("test-validation"),
+						},
+					},
+					Config: "valid-config-with-max-model-len",
+				},
+				Resource: ResourceSpec{
+					InstanceType: "Standard_NV12", // 2 GPUs with 8GB each (16GB total)
+					Count:        pointerToInt(1),
+				},
 			},
 			errContent: "",
 			expectErrs: false,
 		},
 		{
-			name: "Multi-GPU with <20GB per GPU and max-model-len missing",
-			inferenceSpec: &InferenceSpec{
-				Preset: &PresetSpec{
-					PresetMeta: PresetMeta{
-						Name: ModelName("test-validation"),
-					},
+			name: "Single Instance, Multi-GPU with <20GB per GPU and max-model-len missing",
+			workspace: &Workspace{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: DefaultReleaseNamespace,
 				},
-				Config: "invalid-config-without-max-model-len",
-			},
-			resourceSpec: &ResourceSpec{
-				InstanceType: "Standard_NV12", // 2 GPUs with 8GB each (16GB total)
-				Count:        pointerToInt(1),
+				Inference: &InferenceSpec{
+					Preset: &PresetSpec{
+						PresetMeta: PresetMeta{
+							Name: ModelName("test-validation"),
+						},
+					},
+					Config: "invalid-config-without-max-model-len",
+				},
+				Resource: ResourceSpec{
+					InstanceType: "Standard_NV12", // 2 GPUs with 8GB each (16GB total)
+					Count:        pointerToInt(1),
+				},
 			},
 			errContent: "max-model-len is required in the vllm section of inference_config.yaml when using multi-GPU instances with <20GB of memory per GPU",
 			expectErrs: true,
 		},
 		{
-			name: "Multi-GPU with <20GB per GPU and empty vllm section",
-			inferenceSpec: &InferenceSpec{
-				Preset: &PresetSpec{
-					PresetMeta: PresetMeta{
-						Name: ModelName("test-validation"),
-					},
+			name: "Single Instance, Multi-GPU with <20GB per GPU and empty vllm section",
+			workspace: &Workspace{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: DefaultReleaseNamespace,
 				},
-				Config: "invalid-config-empty-vllm",
-			},
-			resourceSpec: &ResourceSpec{
-				InstanceType: "Standard_NV12", // 2 GPUs with 8GB each (16GB total)
-				Count:        pointerToInt(1),
+				Inference: &InferenceSpec{
+					Preset: &PresetSpec{
+						PresetMeta: PresetMeta{
+							Name: ModelName("test-validation"),
+						},
+					},
+					Config: "invalid-config-empty-vllm",
+				},
+				Resource: ResourceSpec{
+					InstanceType: "Standard_NV12", // 2 GPUs with 8GB each (16GB total)
+					Count:        pointerToInt(1),
+				},
 			},
 			errContent: "max-model-len is required in the vllm section of inference_config.yaml when using multi-GPU instances with <20GB of memory per GPU",
 			expectErrs: true,
 		},
 		{
-			name: "Multi-GPU with <20GB per GPU and vllm section missing",
-			inferenceSpec: &InferenceSpec{
-				Preset: &PresetSpec{
-					PresetMeta: PresetMeta{
-						Name: ModelName("test-validation"),
-					},
+			name: "Single Instance, Multi-GPU with <20GB per GPU and vllm section missing",
+			workspace: &Workspace{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: DefaultReleaseNamespace,
 				},
-				Config: "invalid-config-no-vllm",
-			},
-			resourceSpec: &ResourceSpec{
-				InstanceType: "Standard_NV12", // 2 GPUs with 8GB each (16GB total)
-				Count:        pointerToInt(1),
+				Inference: &InferenceSpec{
+					Preset: &PresetSpec{
+						PresetMeta: PresetMeta{
+							Name: ModelName("test-validation"),
+						},
+					},
+					Config: "invalid-config-no-vllm",
+				},
+				Resource: ResourceSpec{
+					InstanceType: "Standard_NV12", // 2 GPUs with 8GB each (16GB total)
+					Count:        pointerToInt(1),
+				},
 			},
 			errContent: "max-model-len is required in the vllm section of inference_config.yaml when using multi-GPU instances with <20GB of memory per GPU",
 			expectErrs: true,
 		},
 		{
-			name: "Single-GPU instance (no max-model-len required)",
-			inferenceSpec: &InferenceSpec{
-				Preset: &PresetSpec{
-					PresetMeta: PresetMeta{
-						Name: ModelName("test-validation"),
-					},
+			name: "Single Instance, Single-GPU (no max-model-len required)",
+			workspace: &Workspace{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: DefaultReleaseNamespace,
 				},
-				Config: "invalid-config-without-max-model-len",
-			},
-			resourceSpec: &ResourceSpec{
-				InstanceType: "Standard_NV6", // 1 GPU with 8GB
-				Count:        pointerToInt(1),
+				Inference: &InferenceSpec{
+					Preset: &PresetSpec{
+						PresetMeta: PresetMeta{
+							Name: ModelName("test-validation"),
+						},
+					},
+					Config: "invalid-config-without-max-model-len",
+				},
+				Resource: ResourceSpec{
+					InstanceType: "Standard_NV6", // 1 GPU with 8GB
+					Count:        pointerToInt(1),
+				},
 			},
 			errContent: "",
 			expectErrs: false,
 		},
 		{
-			name: "Multi-GPU with >=20GB per GPU (no max-model-len required)",
-			inferenceSpec: &InferenceSpec{
-				Preset: &PresetSpec{
-					PresetMeta: PresetMeta{
-						Name: ModelName("test-validation"),
-					},
+			name: "Single Instance, Multi-GPU with >=20GB per GPU (no max-model-len required)",
+			workspace: &Workspace{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: DefaultReleaseNamespace,
 				},
-				Config: "invalid-config-without-max-model-len",
-			},
-			resourceSpec: &ResourceSpec{
-				InstanceType: "Standard_NC48ads_A100_v4", // 2 GPUs with 80GB each (160GB total)
-				Count:        pointerToInt(1),
+				Inference: &InferenceSpec{
+					Preset: &PresetSpec{
+						PresetMeta: PresetMeta{
+							Name: ModelName("test-validation"),
+						},
+					},
+					Config: "invalid-config-without-max-model-len",
+				},
+				Resource: ResourceSpec{
+					InstanceType: "Standard_NC48ads_A100_v4", // 2 GPUs with 80GB each (160GB total)
+					Count:        pointerToInt(1),
+				},
 			},
 			errContent: "",
+			expectErrs: false,
+		},
+		{
+			name: "Multi Instances, GPU with <20GB per instance and max-model-len missing",
+			workspace: &Workspace{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: DefaultReleaseNamespace,
+				},
+				Inference: &InferenceSpec{
+					Preset: &PresetSpec{
+						PresetMeta: PresetMeta{
+							Name: ModelName("test-validation"),
+						},
+					},
+					Config: "invalid-config-without-max-model-len",
+				},
+				Resource: ResourceSpec{
+					InstanceType: "Standard_NC6s_v3", // 1 GPUs with 16GB
+					Count:        pointerToInt(2),
+				},
+			},
+			errContent: "max-model-len is required in the vllm section of inference_config.yaml when using multi-GPU instances with <20GB of memory per GPU",
+			expectErrs: true,
+		},
+		{
+			name: "Multi Instances, GPU with <20GB per instance and max-model-len set",
+			workspace: &Workspace{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: DefaultReleaseNamespace,
+				},
+				Inference: &InferenceSpec{
+					Preset: &PresetSpec{
+						PresetMeta: PresetMeta{
+							Name: ModelName("test-validation"),
+						},
+					},
+					Config: "valid-config-with-max-model-len",
+				},
+				Resource: ResourceSpec{
+					InstanceType: "Standard_NC6s_v3", // 1 GPUs with 16GB
+					Count:        pointerToInt(2),
+				},
+			},
 			expectErrs: false,
 		},
 	}
 
-	t.Setenv("CLOUD_PROVIDER", consts.AzureCloudName)
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// Validate the inference spec
-			runtimeName := model.RuntimeNameVLLM
-			if tc.runtimeName != "" {
-				runtimeName = tc.runtimeName
-			}
-			errs := tc.inferenceSpec.validateCreate(ctx, DefaultReleaseNamespace, tc.resourceSpec.InstanceType, runtimeName)
+			// Call validateInferenceConfig directly
+			errs := tc.workspace.validateInferenceConfig(ctx)
 			hasErrs := errs != nil
 
 			if hasErrs != tc.expectErrs {
-				t.Errorf("validateCreate() errors = %v, expectErrs %v", errs, tc.expectErrs)
+				t.Errorf("validateInferenceConfig() errors = %v, expectErrs %v", errs, tc.expectErrs)
 			}
 
 			if hasErrs && tc.errContent != "" {
 				errMsg := errs.Error()
 				if !strings.Contains(errMsg, tc.errContent) {
-					t.Errorf("validateCreate() error message = %v, expected to contain = %v", errMsg, tc.errContent)
+					t.Errorf("validateInferenceConfig() error message = %v, expected to contain = %v", errMsg, tc.errContent)
 				}
 			}
 		})

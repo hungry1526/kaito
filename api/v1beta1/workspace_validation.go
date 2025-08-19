@@ -1,5 +1,15 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package v1beta1
 
@@ -19,6 +29,7 @@ import (
 	"k8s.io/klog/v2"
 	"knative.dev/pkg/apis"
 
+	"github.com/kaito-project/kaito/pkg/featuregates"
 	"github.com/kaito-project/kaito/pkg/model"
 	"github.com/kaito-project/kaito/pkg/utils"
 	"github.com/kaito-project/kaito/pkg/utils/consts"
@@ -47,6 +58,16 @@ func (w *Workspace) Validate(ctx context.Context) (errs *apis.FieldError) {
 	if len(errmsgs) > 0 {
 		errs = errs.Also(apis.ErrInvalidValue(strings.Join(errmsgs, ", "), "name"))
 	}
+
+	// Check if node auto-provisioning is disabled and validate preferred nodes
+	if featuregates.FeatureGates[consts.FeatureFlagDisableNodeAutoProvisioning] {
+		if len(w.Resource.PreferredNodes) < *w.Resource.Count {
+			errs = errs.Also(apis.ErrInvalidValue(
+				fmt.Sprintf("When node auto-provisioning is disabled, the number of preferred nodes (%d) must be at least the required amount (%d) set in count",
+					len(w.Resource.PreferredNodes), *w.Resource.Count), "preferredNodes"))
+		}
+	}
+
 	base := apis.GetBaseline(ctx)
 	if base == nil {
 		klog.InfoS("Validate creation", "workspace", fmt.Sprintf("%s/%s", w.Namespace, w.Name))
@@ -62,8 +83,11 @@ func (w *Workspace) Validate(ctx context.Context) (errs *apis.FieldError) {
 
 			runtime := GetWorkspaceRuntimeName(w)
 			// TODO: Add Adapter Spec Validation - Including DataSource Validation for Adapter
-			errs = errs.Also(w.Resource.validateCreateWithInference(w.Inference, bypassResourceChecks).ViaField("resource"),
-				w.Inference.validateCreate(ctx, w.Namespace, w.Resource.InstanceType, runtime).ViaField("inference"))
+			errs = errs.Also(
+				w.Resource.validateCreateWithInference(w.Inference, bypassResourceChecks, runtime).ViaField("resource"),
+				w.Inference.validateCreate(ctx, runtime).ViaField("inference"),
+				w.validateInferenceConfig(ctx),
+			)
 		}
 		if w.Tuning != nil {
 			// TODO: Add validate resource based on Tuning Spec
@@ -209,15 +233,15 @@ func (r *DataSource) validateCreate() (errs *apis.FieldError) {
 	if len(r.URLs) > 0 {
 		sourcesSpecified++
 	}
-	if r.Volume != nil {
-		errs = errs.Also(apis.ErrInvalidValue("Volume support is not implemented yet", "Volume"))
-		sourcesSpecified++
-	}
 	if image := r.Image; image != "" {
 		if _, err := reference.ParseDockerRef(image); err != nil {
 			errs = errs.Also(apis.ErrInvalidValue(fmt.Sprintf("Unable to parse input image reference: %s", err), "Image"))
 		}
 
+		sourcesSpecified++
+	}
+
+	if volume := r.Volume; volume != nil {
 		sourcesSpecified++
 	}
 
@@ -233,9 +257,6 @@ func (r *DataSource) validateUpdate(old *DataSource, isTuning bool) (errs *apis.
 	if isTuning && !reflect.DeepEqual(old.Name, r.Name) {
 		errs = errs.Also(apis.ErrInvalidValue("During tuning Name field cannot be changed once set", "Name"))
 	}
-	if r.Volume != nil {
-		errs = errs.Also(apis.ErrInvalidValue("Volume support is not implemented yet", "Volume"))
-	}
 	if image := r.Image; image != "" {
 		if _, err := reference.ParseDockerRef(image); err != nil {
 			errs = errs.Also(apis.ErrInvalidValue(fmt.Sprintf("Unable to parse input image reference: %s", err), "Image"))
@@ -247,11 +268,6 @@ func (r *DataSource) validateUpdate(old *DataSource, isTuning bool) (errs *apis.
 
 func (r *DataDestination) validateCreate() (errs *apis.FieldError) {
 	destinationsSpecified := 0
-	// TODO: Implement Volumes
-	if r.Volume != nil {
-		errs = errs.Also(apis.ErrInvalidValue("Volume support is not implemented yet", "Volume"))
-		destinationsSpecified++
-	}
 	if image := r.Image; image != "" {
 		if _, err := reference.ParseDockerRef(image); err != nil {
 			errs = errs.Also(apis.ErrInvalidValue(fmt.Sprintf("Unable to parse output image reference: %s", err), "Image"))
@@ -265,18 +281,18 @@ func (r *DataDestination) validateCreate() (errs *apis.FieldError) {
 		destinationsSpecified++
 	}
 
-	// If no destination is specified, return an error
-	if destinationsSpecified == 0 {
-		errs = errs.Also(apis.ErrMissingField("At least one of Volume or Image must be specified"))
+	if volume := r.Volume; volume != nil {
+		destinationsSpecified++
+	}
+
+	// Ensure exactly one of Volume or Image is specified
+	if destinationsSpecified != 1 {
+		errs = errs.Also(apis.ErrMissingField("Exactly one of Volume or Image must be specified")) // TODO: Consider allowing both Volume and Image to be specified
 	}
 	return errs
 }
 
 func (r *DataDestination) validateUpdate() (errs *apis.FieldError) {
-	// TODO: Implement Volumes
-	if r.Volume != nil {
-		errs = errs.Also(apis.ErrInvalidValue("Volume support is not implemented yet", "Volume"))
-	}
 	if image := r.Image; image != "" {
 		if _, err := reference.ParseDockerRef(image); err != nil {
 			errs = errs.Also(apis.ErrInvalidValue(fmt.Sprintf("Unable to parse output image reference: %s", err), "Image"))
@@ -293,7 +309,7 @@ func (r *ResourceSpec) validateCreateWithTuning(tuning *TuningSpec) (errs *apis.
 	return errs
 }
 
-func (r *ResourceSpec) validateCreateWithInference(inference *InferenceSpec, bypassResourceChecks bool) (errs *apis.FieldError) {
+func (r *ResourceSpec) validateCreateWithInference(inference *InferenceSpec, bypassResourceChecks bool, runtime model.RuntimeName) (errs *apis.FieldError) {
 	var presetName string
 	if inference.Preset != nil {
 		presetName = strings.ToLower(string(inference.Preset.Name))
@@ -314,8 +330,8 @@ func (r *ResourceSpec) validateCreateWithInference(inference *InferenceSpec, byp
 	// Check if instancetype exists in our SKUs map for the particular cloud provider
 	if skuConfig := skuHandler.GetGPUConfigBySKU(instanceType); skuConfig != nil {
 		if presetName != "" {
-			model := plugin.KaitoModelRegister.MustGet(presetName) // InferenceSpec has been validated so the name is valid.
-			params := model.GetInferenceParameters()
+			modelPreset := plugin.KaitoModelRegister.MustGet(presetName) // InferenceSpec has been validated so the name is valid.
+			params := modelPreset.GetInferenceParameters()
 
 			machineCount := *r.Count
 			machineTotalNumGPUs := resource.NewQuantity(int64(machineCount*skuConfig.GPUCount), resource.DecimalSI)
@@ -380,6 +396,15 @@ func (r *ResourceSpec) validateCreateWithInference(inference *InferenceSpec, byp
 					))
 				}
 			}
+
+			// If the model preset supports distributed inference, and a single machine has insufficient GPU memory to run the model,
+			// then we need to make sure the Workspace is not using the Huggingface Transformers runtime since it no longer supports
+			// multi-node distributed inference.
+			totalGPUMemoryPerMachine := resource.NewQuantity(int64(skuConfig.GPUMemGB)*consts.GiBToBytes, resource.BinarySI)
+			distributedInferenceRequired := modelTotalGPUMemory.Cmp(*totalGPUMemoryPerMachine) > 0
+			if modelPreset.SupportDistributedInference() && distributedInferenceRequired && runtime == model.RuntimeNameHuggingfaceTransformers {
+				errs = errs.Also(apis.ErrGeneric("Multi-node distributed inference is not supported with Huggingface Transformers runtime"))
+			}
 		}
 	} else {
 		provider := os.Getenv("CLOUD_PROVIDER")
@@ -417,7 +442,7 @@ func (r *ResourceSpec) validateUpdate(old *ResourceSpec) (errs *apis.FieldError)
 	return errs
 }
 
-func (i *InferenceSpec) validateCreate(ctx context.Context, namespace string, instanceType string, runtime model.RuntimeName) (errs *apis.FieldError) {
+func (i *InferenceSpec) validateCreate(ctx context.Context, runtime model.RuntimeName) (errs *apis.FieldError) {
 	// Check if both Preset and Template are not set
 	if i.Preset == nil && i.Template == nil {
 		errs = errs.Also(apis.ErrMissingField("Preset or Template must be specified"))
@@ -438,11 +463,6 @@ func (i *InferenceSpec) validateCreate(ctx context.Context, namespace string, in
 		}
 		modelPreset := plugin.KaitoModelRegister.MustGet(string(i.Preset.Name))
 		params := modelPreset.GetInferenceParameters()
-		// Validate private preset has private image specified
-		if params.ImageAccessMode == string(ModelImageAccessModePrivate) &&
-			i.Preset.AccessMode != ModelImageAccessModePrivate {
-			errs = errs.Also(apis.ErrGeneric("This preset only supports private AccessMode, AccessMode must be private to continue"))
-		}
 		useAdapterStrength := false
 		for _, adapter := range i.Adapters {
 			if adapter.Strength != nil {
@@ -460,11 +480,12 @@ func (i *InferenceSpec) validateCreate(ctx context.Context, namespace string, in
 		if err != nil {
 			errs = errs.Also(apis.ErrGeneric(fmt.Sprintf("Runtime validation: %v", err)))
 		}
-		// Additional validations for Preset
-		if i.Preset.AccessMode == ModelImageAccessModePrivate && i.Preset.Image == "" {
-			errs = errs.Also(apis.ErrGeneric("When AccessMode is private, an image must be provided in PresetOptions"))
+		// For models that require downloading at runtime, we need to check if the modelAccessSecret is provided
+		if params.DownloadAtRuntime && i.Preset.PresetOptions.ModelAccessSecret == "" {
+			errs = errs.Also(apis.ErrGeneric("This preset requires a modelAccessSecret with HF_TOKEN key under presetOptions to download the model"))
+		} else if !params.DownloadAtRuntime && i.Preset.PresetOptions.ModelAccessSecret != "" {
+			errs = errs.Also(apis.ErrGeneric("This preset does not require a modelAccessSecret with HF_TOKEN key under presetOptions"))
 		}
-		// Note: we don't enforce private access mode to have image secrets, in case anonymous pulling is enabled
 	}
 	if len(i.Adapters) > MaxAdaptersNumber {
 		errs = errs.Also(apis.ErrGeneric(fmt.Sprintf("Number of Adapters exceeds the maximum limit, maximum of %s allowed", strconv.Itoa(MaxAdaptersNumber))))
@@ -474,30 +495,6 @@ func (i *InferenceSpec) validateCreate(ctx context.Context, namespace string, in
 	if len(i.Adapters) > 0 {
 		nameMap := make(map[string]bool)
 		errs = errs.Also(validateDuplicateName(i.Adapters, nameMap))
-	}
-
-	// check if required fields are set
-	// this check only applies to vllm runtime
-	if runtime == model.RuntimeNameVLLM {
-		func() {
-			var (
-				cmName = i.Config
-				cmNS   = namespace
-				err    error
-			)
-			if cmName == "" {
-				klog.Infof("Inference config not specified. Using default: %q", DefaultInferenceConfigTemplate)
-				cmName = DefaultInferenceConfigTemplate
-				cmNS, err = utils.GetReleaseNamespace()
-				if err != nil {
-					errs = errs.Also(apis.ErrGeneric(fmt.Sprintf("Failed to determine release namespace: %v", err), "namespace"))
-					return
-				}
-			}
-			if err := i.validateConfigMap(ctx, cmNS, cmName, instanceType); err != nil {
-				errs = errs.Also(apis.ErrGeneric(fmt.Sprintf("Failed to evaluate validateConfigMap: %v", err), "Config"))
-			}
-		}()
 	}
 
 	return errs

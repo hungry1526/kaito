@@ -1,0 +1,164 @@
+name: Build and Push Preset Models
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'presets/workspace/inference/**'
+      - 'presets/workspace/models/supported_models.yaml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'presets/workspace/inference/**'
+      - 'presets/workspace/models/supported_models.yaml'
+  workflow_dispatch:
+    inputs:
+      force-run-all:
+        type: boolean
+        default: false
+        description: "Run all models for build"
+      force-run-all-public:
+        type: boolean
+        default: false
+        description: "Run all public models for build"
+env:
+    GO_VERSION: "1.24"
+    BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+    WEIGHTS_DIR: "/datadrive"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  determine-models:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.affected_models.outputs.matrix }}
+      is_matrix_empty: ${{ steps.check_matrix_empty.outputs.is_empty }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Set FORCE_RUN_ALL Flag
+        id: set_force_run_all
+        run: |
+          echo "FORCE_RUN_ALL=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force-run-all == 'true' }}" >> $GITHUB_OUTPUT
+
+      # This script should output a JSON array of model names
+      - name: Determine Affected Models
+        id: affected_models
+        run: |
+          PR_BRANCH=${{ env.BRANCH_NAME }} \
+          FORCE_RUN_ALL=${{ steps.set_force_run_all.outputs.FORCE_RUN_ALL }} \
+          python3 .github/determine_models.py
+
+      - name: Print Determined Models
+        run: |
+          echo "Output from affected_models: ${{ steps.affected_models.outputs.matrix }}"
+
+      - name: Check if Matrix is Empty
+        id: check_matrix_empty
+        run: |
+          if [ "${{ steps.affected_models.outputs.matrix }}" == "[]" ] || [ -z "${{ steps.affected_models.outputs.matrix }}" ]; then
+            echo "is_empty=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_empty=false" >> $GITHUB_OUTPUT
+          fi
+
+  scan-baseos-image:
+    name: Scan preset base os image
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_REF: "test/preset-tfs:latest"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Build image from Dockerfile
+        env:
+          OUTPUT_TYPE: type=docker
+          IMAGE_REF: ${{ env.IMAGE_REF }}
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --output="${OUTPUT_TYPE}" \
+            -t "${IMAGE_REF}" \
+            --build-arg VERSION="v0.0.1" \
+            --build-arg MODEL_TYPE="text-generation" \
+            --target dependencies \
+            -f docker/presets/models/tfs/Dockerfile ../
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4 # v0.32.0
+        with:
+          image-ref: "${{ env.IMAGE_REF }}"
+          format: "table"
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN"
+          scanners: "vuln"
+
+  build-models:
+    needs: determine-models
+    if: needs.determine-models.outputs.is_matrix_empty == 'false'
+    runs-on: [self-hosted, 'hostname:model-server']
+    environment: preset-env
+    strategy:
+      fail-fast: false
+      matrix:
+        model: ${{fromJson(needs.determine-models.outputs.matrix)}}
+      max-parallel: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Install Azure CLI latest
+        run: |
+              if ! which az > /dev/null; then
+                  echo "Azure CLI not found. Installing..."
+                  curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+              else
+                  echo "Azure CLI already installed."
+              fi
+
+      - name: 'Az CLI login'
+        uses: azure/login@v2.3.0
+        with:
+            client-id: ${{ secrets.AZURE_CLIENT_ID }}
+            tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+            allow-no-subscriptions: true
+
+      - name: 'Set subscription'
+        run: az account set --subscription ${{secrets.AZURE_SUBSCRIPTION_ID}}
+
+      - name: Call Reusable Workflow - Build Image
+        uses: ./.github/actions/build-image-action
+        with:
+          weights_dir: ${{ env.WEIGHTS_DIR }}
+          branch_name: ${{ env.BRANCH_NAME }}
+          image_name: ${{ matrix.model.name }}
+          image_tag: ${{ matrix.model.tag }}
+          acr_name: ${{ secrets.ACR_AMRT_USERNAME }}
+          acr_username: ${{ secrets.ACR_AMRT_USERNAME }}
+          acr_password: ${{ secrets.ACR_AMRT_PASSWORD }}
+          model_name: ${{ matrix.model.name }}
+          model_type: ${{ matrix.model.type }}
+          model_version: ${{ matrix.model.version }}
+          model_runtime: ${{ matrix.model.runtime }}
+          hf_username: ${{ secrets.HF_USERNAME }}
+          hf_token: ${{ secrets.HF_TOKEN }}
+          runs_on: "hostname:model-server"

@@ -1,11 +1,21 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package phi4
 
 import (
 	"time"
 
-	kaitov1beta1 "github.com/kaito-project/kaito/api/v1beta1"
 	"github.com/kaito-project/kaito/pkg/model"
 	"github.com/kaito-project/kaito/pkg/utils/plugin"
 	"github.com/kaito-project/kaito/pkg/workspace/inference"
@@ -37,7 +47,10 @@ var (
 		"trust_remote_code": "",
 	}
 	phiRunParamsVLLM = map[string]string{
-		"dtype": "float16",
+		"dtype":                   "float16",
+		"chat-template":           "/workspace/chat_templates/tool-chat-phi4-mini.jinja",
+		"tool-call-parser":        "phi4_mini_json",
+		"enable-auto-tool-choice": "",
 	}
 )
 
@@ -48,15 +61,14 @@ type phi4Model struct{}
 func (*phi4Model) GetInferenceParameters() *model.PresetParam {
 	return &model.PresetParam{
 		Metadata:                  metadata.MustGet(PresetPhi4Model),
-		ImageAccessMode:           string(kaitov1beta1.ModelImageAccessModePublic),
-		DiskStorageRequirement:    "100Gi",
+		DiskStorageRequirement:    "150Gi",
 		GPUCountRequirement:       "1",
 		TotalGPUMemoryRequirement: "40Gi", // Requires at least A100 - TODO: Revisit for more accurate metric here
 		PerGPUMemoryRequirement:   "0Gi",  // We run Phi using native vertical model parallel, no per GPU memory requirement.
 		RuntimeParam: model.RuntimeParam{
 			Transformers: model.HuggingfaceTransformersParam{
 				BaseCommand:       baseCommandPresetPhiInference,
-				TorchRunParams:    inference.DefaultAccelerateParams,
+				AccelerateParams:  inference.DefaultAccelerateParams,
 				InferenceMainFile: inference.DefaultTransformersMainFile,
 				ModelRunParams:    phiRunParams,
 			},
@@ -73,8 +85,7 @@ func (*phi4Model) GetInferenceParameters() *model.PresetParam {
 func (*phi4Model) GetTuningParameters() *model.PresetParam {
 	return &model.PresetParam{
 		Metadata:                  metadata.MustGet(PresetPhi4Model),
-		ImageAccessMode:           string(kaitov1beta1.ModelImageAccessModePublic),
-		DiskStorageRequirement:    "100Gi",
+		DiskStorageRequirement:    "150Gi",
 		GPUCountRequirement:       "1",
 		TotalGPUMemoryRequirement: "70Gi", // Requires at least A100 - TODO: Revisit for more accurate metric here
 		PerGPUMemoryRequirement:   "70Gi",
@@ -99,15 +110,14 @@ type phi4MiniInstruct struct{}
 func (*phi4MiniInstruct) GetInferenceParameters() *model.PresetParam {
 	return &model.PresetParam{
 		Metadata:                  metadata.MustGet(PresetPhi4MiniInstructModel),
-		ImageAccessMode:           string(kaitov1beta1.ModelImageAccessModePublic),
-		DiskStorageRequirement:    "50Gi",
+		DiskStorageRequirement:    "70Gi",
 		GPUCountRequirement:       "1",
 		TotalGPUMemoryRequirement: "8Gi",
 		PerGPUMemoryRequirement:   "0Gi", // We run Phi using native vertical model parallel, no per GPU memory requirement.
 		RuntimeParam: model.RuntimeParam{
 			Transformers: model.HuggingfaceTransformersParam{
 				BaseCommand:       baseCommandPresetPhiInference,
-				TorchRunParams:    inference.DefaultAccelerateParams,
+				AccelerateParams:  inference.DefaultAccelerateParams,
 				InferenceMainFile: inference.DefaultTransformersMainFile,
 				ModelRunParams:    phiRunParams,
 			},
@@ -124,8 +134,7 @@ func (*phi4MiniInstruct) GetInferenceParameters() *model.PresetParam {
 func (*phi4MiniInstruct) GetTuningParameters() *model.PresetParam {
 	return &model.PresetParam{
 		Metadata:                  metadata.MustGet(PresetPhi4MiniInstructModel),
-		ImageAccessMode:           string(kaitov1beta1.ModelImageAccessModePublic),
-		DiskStorageRequirement:    "50Gi",
+		DiskStorageRequirement:    "70Gi",
 		GPUCountRequirement:       "1",
 		TotalGPUMemoryRequirement: "72Gi", // Requires at least A100 - TODO: Revisit for more accurate metric here
 		PerGPUMemoryRequirement:   "72Gi",

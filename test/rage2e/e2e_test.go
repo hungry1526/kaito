@@ -1,10 +1,21 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package e2e
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"math/rand"
 	"os"
@@ -19,6 +30,8 @@ import (
 
 	"github.com/kaito-project/kaito/test/e2e/utils"
 )
+
+var skipGPUProvisionerCheck = flag.Bool("skip-gpu-provisioner-check", false, "Skip checking for GPU provisioner pod in e2e tests")
 
 var (
 	ctx                 = context.Background()
@@ -53,12 +66,14 @@ var _ = BeforeSuite(func() {
 			Should(Succeed(), "Failed to wait for	karpenter deployment")
 	}
 
-	if nodeProvisionerName == "gpuprovisioner" {
+	if !*skipGPUProvisionerCheck &&
+		nodeProvisionerName == "gpuprovisioner" {
+		gpuName := os.Getenv("GPU_PROVISIONER_NAME")
 		gpuNamespace := os.Getenv("GPU_PROVISIONER_NAMESPACE")
 		//check gpu-provisioner deployment is up and running
 		gpuProvisionerDeployment := &v1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "gpu-provisioner",
+				Name:      gpuName,
 				Namespace: gpuNamespace,
 			},
 		}
@@ -69,7 +84,7 @@ var _ = BeforeSuite(func() {
 				Name:      gpuProvisionerDeployment.Name,
 			}, gpuProvisionerDeployment, &client.GetOptions{})
 		}, utils.PollTimeout, utils.PollInterval).
-			Should(Succeed(), "Failed to wait for	gpu-provisioner deployment")
+			Should(Succeed(), fmt.Sprintf("Failed to wait for %s deployment", gpuName))
 	}
 
 	//check kaito-workspace deployment is up and running

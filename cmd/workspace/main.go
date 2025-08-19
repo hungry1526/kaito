@@ -1,5 +1,16 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package main
 
 import (
@@ -13,6 +24,8 @@ import (
 
 	//+kubebuilder:scaffold:imports
 	azurev1alpha2 "github.com/Azure/karpenter-provider-azure/pkg/apis/v1alpha2"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -21,6 +34,7 @@ import (
 	"knative.dev/pkg/injection/sharedmain"
 	"knative.dev/pkg/webhook"
 	ctrl "sigs.k8s.io/controller-runtime"
+	runtimecache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -32,9 +46,8 @@ import (
 	"github.com/kaito-project/kaito/pkg/featuregates"
 	"github.com/kaito-project/kaito/pkg/k8sclient"
 	kaitoutils "github.com/kaito-project/kaito/pkg/utils"
-	"github.com/kaito-project/kaito/pkg/utils/consts"
-	"github.com/kaito-project/kaito/pkg/utils/nodeclaim"
 	"github.com/kaito-project/kaito/pkg/workspace/controllers"
+	"github.com/kaito-project/kaito/pkg/workspace/controllers/garbagecollect"
 	"github.com/kaito-project/kaito/pkg/workspace/webhooks"
 )
 
@@ -58,6 +71,8 @@ func init() {
 	utilruntime.Must(kaitoutils.KarpenterSchemeBuilder.AddToScheme(scheme))
 	utilruntime.Must(azurev1alpha2.SchemeBuilder.AddToScheme(scheme))
 	utilruntime.Must(kaitoutils.AwsSchemeBuilder.AddToScheme(scheme))
+	utilruntime.Must(helmv2.AddToScheme(scheme))
+	utilruntime.Must(sourcev1.AddToScheme(scheme))
 
 	//+kubebuilder:scaffold:scheme
 	klog.InitFlags(nil)
@@ -76,12 +91,17 @@ func main() {
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.BoolVar(&enableWebhook, "webhook", true,
 		"Enable webhook for controller manager. Default is true.")
-	flag.StringVar(&featureGates, "feature-gates", "vLLM=true", "Enable Kaito feature gates. Default,	vLLM=true.")
+	flag.StringVar(&featureGates, "feature-gates", "vLLM=true,disableNodeAutoProvisioning=false", "Enable Kaito feature gates. Default: vLLM=true,disableNodeAutoProvisioning=false.")
 	opts := zap.Options{
 		Development: true,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+
+	if err := featuregates.ParseAndValidateFeatureGates(featureGates); err != nil {
+		klog.ErrorS(err, "unable to set `feature-gates` flag")
+		exitWithErrorFunc()
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
@@ -106,6 +126,9 @@ func main() {
 		// if you are doing or is intended to do any operation such as perform cleanups
 		// after the manager stops then its usage might be unsafe.
 		// LeaderElectionReleaseOnCancel: true,
+		Cache: runtimecache.Options{
+			DefaultTransform: runtimecache.TransformStripManagedFields(),
+		},
 	})
 	if err != nil {
 		klog.ErrorS(err, "unable to start manager")
@@ -126,6 +149,16 @@ func main() {
 		klog.ErrorS(err, "unable to create controller", "controller", "Workspace")
 		exitWithErrorFunc()
 	}
+
+	pvGCReconciler := garbagecollect.NewPersistentVolumeGCReconciler(
+		kClient,
+		mgr.GetEventRecorderFor("KAITO-PersistentVolumeGC-controller"),
+	)
+	if err = pvGCReconciler.SetupWithManager(mgr); err != nil {
+		klog.ErrorS(err, "unable to create controller", "controller", "PersistentVolumeGC")
+		exitWithErrorFunc()
+	}
+
 	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -155,18 +188,6 @@ func main() {
 
 		// wait 2 seconds to allow reconciling webhookconfiguration and service endpoint.
 		time.Sleep(2 * time.Second)
-	}
-
-	if err := featuregates.ParseAndValidateFeatureGates(featureGates); err != nil {
-		klog.ErrorS(err, "unable to set `feature-gates` flag")
-		exitWithErrorFunc()
-	}
-
-	if featuregates.FeatureGates[consts.FeatureFlagEnsureNodeClass] {
-		err := nodeclaim.CheckNodeClass(ctx, kClient)
-		if err != nil {
-			exitWithErrorFunc()
-		}
 	}
 
 	klog.InfoS("starting manager")

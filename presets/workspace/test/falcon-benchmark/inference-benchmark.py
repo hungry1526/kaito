@@ -1,14 +1,27 @@
-# Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
-import csv
+# Copyright (c) KAITO authors.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import argparse
-from transformers import AutoTokenizer, AutoModelForCausalLM
-import transformers
-import torch
-from datetime import datetime
+import csv
 import time
 import uuid
+from datetime import datetime
+
+import torch
+import transformers
 from accelerate import Accelerator
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -21,8 +34,13 @@ def get_args():
     parser.add_argument("--data_parallelism", type=str, required=True)
     parser.add_argument("--quantization", type=str, required=True)
     parser.add_argument("--machine", type=str, required=True)
-    parser.add_argument("--use_accelerator", action='store_true', help="Use the Accelerator for parallel processing.")
+    parser.add_argument(
+        "--use_accelerator",
+        action="store_true",
+        help="Use the Accelerator for parallel processing.",
+    )
     return parser.parse_args()
+
 
 def inference(requests):
     for request in requests:
@@ -39,8 +57,8 @@ def inference(requests):
 
         end_time = time.time()
         inference_time = end_time - start_time
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         result = {
             "model": args.model,
             "num_nodes": args.num_nodes,
@@ -53,13 +71,14 @@ def inference(requests):
             "quantization": args.quantization,
             "machine": args.machine,
             "inference_time": inference_time,
-            "request_id": str(uuid.uuid4()), # Generate a unique UUID
-            "timestamp": timestamp
+            "request_id": str(uuid.uuid4()),  # Generate a unique UUID
+            "timestamp": timestamp,
         }
         writer.writerow(result)
 
         for seq in sequences:
             print(f"Result: {seq['generated_text']}")
+
 
 args = get_args()
 
@@ -82,13 +101,26 @@ pipeline = transformers.pipeline(
 )
 
 
-
-with open("../common-gpt-questions.csv", "r") as f:
+with open("../common-gpt-questions.csv") as f:
     requests = [line.strip() for line in f.readlines()]
 
-fieldnames = ["model", "num_nodes", "num_processes", "num_gpus", "num_prompts", "prompt_len", "model_parallelism", "data_parallelism", "quantization", "machine", "inference_time", "request_id", "timestamp"]
+fieldnames = [
+    "model",
+    "num_nodes",
+    "num_processes",
+    "num_gpus",
+    "num_prompts",
+    "prompt_len",
+    "model_parallelism",
+    "data_parallelism",
+    "quantization",
+    "machine",
+    "inference_time",
+    "request_id",
+    "timestamp",
+]
 
-with open("results.csv", "a", newline='') as f:
+with open("results.csv", "a", newline="") as f:
     writer = csv.DictWriter(f, fieldnames=fieldnames)
     writer.writeheader()
 
@@ -99,5 +131,3 @@ with open("results.csv", "a", newline='') as f:
             inference(split_requests)
     else:
         inference(requests)
-
-        

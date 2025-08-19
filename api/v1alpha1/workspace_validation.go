@@ -1,5 +1,15 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package v1alpha1
 
@@ -62,8 +72,11 @@ func (w *Workspace) Validate(ctx context.Context) (errs *apis.FieldError) {
 
 			runtime := GetWorkspaceRuntimeName(w)
 			// TODO: Add Adapter Spec Validation - Including DataSource Validation for Adapter
-			errs = errs.Also(w.Resource.validateCreateWithInference(w.Inference, bypassResourceChecks).ViaField("resource"),
-				w.Inference.validateCreate(ctx, w.Namespace, w.Resource.InstanceType, runtime).ViaField("inference"))
+			errs = errs.Also(w.Resource.validateCreateWithInference(
+				w.Inference, bypassResourceChecks).ViaField("resource"),
+				w.Inference.validateCreate(ctx, runtime).ViaField("inference"),
+				w.validateInferenceConfig(ctx),
+			)
 		}
 		if w.Tuning != nil {
 			// TODO: Add validate resource based on Tuning Spec
@@ -209,15 +222,15 @@ func (r *DataSource) validateCreate() (errs *apis.FieldError) {
 	if len(r.URLs) > 0 {
 		sourcesSpecified++
 	}
-	if r.Volume != nil {
-		errs = errs.Also(apis.ErrInvalidValue("Volume support is not implemented yet", "Volume"))
-		sourcesSpecified++
-	}
 	if image := r.Image; image != "" {
 		if _, err := reference.ParseDockerRef(image); err != nil {
 			errs = errs.Also(apis.ErrInvalidValue(fmt.Sprintf("Unable to parse input image reference: %s", err), "Image"))
 		}
 
+		sourcesSpecified++
+	}
+
+	if volume := r.Volume; volume != nil {
 		sourcesSpecified++
 	}
 
@@ -233,9 +246,6 @@ func (r *DataSource) validateUpdate(old *DataSource, isTuning bool) (errs *apis.
 	if isTuning && !reflect.DeepEqual(old.Name, r.Name) {
 		errs = errs.Also(apis.ErrInvalidValue("During tuning Name field cannot be changed once set", "Name"))
 	}
-	if r.Volume != nil {
-		errs = errs.Also(apis.ErrInvalidValue("Volume support is not implemented yet", "Volume"))
-	}
 	if image := r.Image; image != "" {
 		if _, err := reference.ParseDockerRef(image); err != nil {
 			errs = errs.Also(apis.ErrInvalidValue(fmt.Sprintf("Unable to parse input image reference: %s", err), "Image"))
@@ -247,11 +257,6 @@ func (r *DataSource) validateUpdate(old *DataSource, isTuning bool) (errs *apis.
 
 func (r *DataDestination) validateCreate() (errs *apis.FieldError) {
 	destinationsSpecified := 0
-	// TODO: Implement Volumes
-	if r.Volume != nil {
-		errs = errs.Also(apis.ErrInvalidValue("Volume support is not implemented yet", "Volume"))
-		destinationsSpecified++
-	}
 	if image := r.Image; image != "" {
 		if _, err := reference.ParseDockerRef(image); err != nil {
 			errs = errs.Also(apis.ErrInvalidValue(fmt.Sprintf("Unable to parse output image reference: %s", err), "Image"))
@@ -265,18 +270,18 @@ func (r *DataDestination) validateCreate() (errs *apis.FieldError) {
 		destinationsSpecified++
 	}
 
-	// If no destination is specified, return an error
-	if destinationsSpecified == 0 {
-		errs = errs.Also(apis.ErrMissingField("At least one of Volume or Image must be specified"))
+	if volume := r.Volume; volume != nil {
+		destinationsSpecified++
+	}
+
+	// Ensure exactly one of Volume or Image is specified
+	if destinationsSpecified != 1 {
+		errs = errs.Also(apis.ErrMissingField("Exactly one of Volume or Image must be specified")) // TODO: Consider allowing both Volume and Image to be specified
 	}
 	return errs
 }
 
 func (r *DataDestination) validateUpdate() (errs *apis.FieldError) {
-	// TODO: Implement Volumes
-	if r.Volume != nil {
-		errs = errs.Also(apis.ErrInvalidValue("Volume support is not implemented yet", "Volume"))
-	}
 	if image := r.Image; image != "" {
 		if _, err := reference.ParseDockerRef(image); err != nil {
 			errs = errs.Also(apis.ErrInvalidValue(fmt.Sprintf("Unable to parse output image reference: %s", err), "Image"))
@@ -417,7 +422,7 @@ func (r *ResourceSpec) validateUpdate(old *ResourceSpec) (errs *apis.FieldError)
 	return errs
 }
 
-func (i *InferenceSpec) validateCreate(ctx context.Context, namespace string, instanceType string, runtime model.RuntimeName) (errs *apis.FieldError) {
+func (i *InferenceSpec) validateCreate(ctx context.Context, runtime model.RuntimeName) (errs *apis.FieldError) {
 	// Check if both Preset and Template are not set
 	if i.Preset == nil && i.Template == nil {
 		errs = errs.Also(apis.ErrMissingField("Preset or Template must be specified"))
@@ -474,30 +479,6 @@ func (i *InferenceSpec) validateCreate(ctx context.Context, namespace string, in
 	if len(i.Adapters) > 0 {
 		nameMap := make(map[string]bool)
 		errs = errs.Also(validateDuplicateName(i.Adapters, nameMap))
-	}
-
-	// check if required fields are set
-	// this check only applies to vllm runtime
-	if runtime == model.RuntimeNameVLLM {
-		func() {
-			var (
-				cmName = i.Config
-				cmNS   = namespace
-				err    error
-			)
-			if cmName == "" {
-				klog.Infof("Inference config not specified. Using default: %q", DefaultInferenceConfigTemplate)
-				cmName = DefaultInferenceConfigTemplate
-				cmNS, err = utils.GetReleaseNamespace()
-				if err != nil {
-					errs = errs.Also(apis.ErrGeneric(fmt.Sprintf("Failed to determine release namespace: %v", err), "namespace"))
-					return
-				}
-			}
-			if err := i.validateConfigMap(ctx, cmNS, cmName, instanceType); err != nil {
-				errs = errs.Also(apis.ErrGeneric(fmt.Sprintf("Failed to evaluate validateConfigMap: %v", err), "Config"))
-			}
-		}()
 	}
 
 	return errs

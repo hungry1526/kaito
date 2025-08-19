@@ -1,5 +1,15 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package resources
 
@@ -47,22 +57,21 @@ func ListNodes(ctx context.Context, kubeClient client.Client, labelSelector clie
 }
 
 // UpdateNodeWithLabel update the node object with the label key/value
-func UpdateNodeWithLabel(ctx context.Context, nodeName, labelKey, labelValue string, kubeClient client.Client) error {
-	klog.InfoS("UpdateNodeWithLabel", "nodeName", nodeName, "labelKey", labelKey, "labelValue", labelValue)
+func UpdateNodeWithLabel(ctx context.Context, freshNode *corev1.Node, labelKey, labelValue string, kubeClient client.Client) error {
+	klog.InfoS("UpdateNodeWithLabel", "nodeName", freshNode.Name, "labelKey", labelKey, "labelValue", labelValue)
 
-	// get fresh node object
-	freshNode, err := GetNode(ctx, nodeName, kubeClient)
-	if err != nil {
-		klog.ErrorS(err, "cannot get node", "node", nodeName)
-		return err
+	if nvidiaLabelVal, found := freshNode.Labels[LabelKeyNvidia]; found {
+		if nvidiaLabelVal == LabelValueNvidia {
+			return nil
+		}
 	}
 
 	freshNode.Labels = lo.Assign(freshNode.Labels, map[string]string{labelKey: labelValue})
 	opt := &client.UpdateOptions{}
 
-	err = kubeClient.Update(ctx, freshNode, opt)
+	err := kubeClient.Update(ctx, freshNode, opt)
 	if err != nil {
-		klog.ErrorS(err, "cannot update node label", "node", nodeName, labelKey, labelValue)
+		klog.ErrorS(err, "cannot update node label", "node", freshNode.Name, labelKey, labelValue)
 		return err
 	}
 	return nil

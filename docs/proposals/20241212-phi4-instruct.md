@@ -3,7 +3,7 @@ title: Proposal for support of Microsoft's Phi-4
 authors:
   - "Suraj Deshmukh"
 reviewers:
-  - "Kaito contributor"
+  - "KAITO contributor"
 creation-date: 2024-12-12
 last-updated: 2024-12-12
 status: provisional
@@ -11,7 +11,7 @@ status: provisional
 
 # Title
 
-Add official support for Microsoft's Phi-4 models in Kaito.
+Add official support for Microsoft's Phi-4 models in KAITO.
 
 ## Summary
 
@@ -27,7 +27,7 @@ The following table describes the basic model characteristics and the resource r
 |------------------|------------------------------------------|
 | Family name      | Phi-4                                    |
 | Type             | conversational                           |
-| Download site    | <https://huggingface.co/microsoft/phi-4> |
+| Download site    | [https://huggingface.co/microsoft/phi-4](https://huggingface.co/microsoft/phi-4) |
 | Version          | f957856cd926f9d681b14153374d755dd97e45ed |
 | Storage size     | 30 GB                                    |
 | GPU count        | 01 GPU                                   |

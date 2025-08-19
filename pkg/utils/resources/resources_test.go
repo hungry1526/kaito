@@ -1,5 +1,16 @@
-// Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Copyright (c) KAITO authors.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package resources
 
 import (
@@ -8,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	goassert "gotest.tools/assert"
@@ -15,6 +28,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -32,6 +46,57 @@ func TestCheckResourceStatus(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = appsv1.AddToScheme(scheme)
 	_ = batchv1.AddToScheme(scheme)
+	_ = helmv2.AddToScheme(scheme)
+	_ = sourcev1.AddToScheme(scheme)
+	t.Run("Should return nil for ready HelmRelease", func(t *testing.T) {
+		hr := &helmv2.HelmRelease{
+			Status: helmv2.HelmReleaseStatus{
+				Conditions: []metav1.Condition{{
+					Type:   consts.ConditionReady,
+					Status: metav1.ConditionTrue,
+				}},
+			},
+		}
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(hr).Build()
+		err := CheckResourceStatus(hr, cl, 2*time.Second)
+		assert.Nil(t, err)
+	})
+
+	t.Run("Should return timeout error for non-ready HelmRelease", func(t *testing.T) {
+		hr := &helmv2.HelmRelease{
+			Status: helmv2.HelmReleaseStatus{
+				Conditions: []metav1.Condition{},
+			},
+		}
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(hr).Build()
+		err := CheckResourceStatus(hr, cl, 1*time.Millisecond)
+		assert.Error(t, err)
+	})
+
+	t.Run("Should return nil for ready OCIRepository", func(t *testing.T) {
+		oci := &sourcev1.OCIRepository{
+			Status: sourcev1.OCIRepositoryStatus{
+				Conditions: []metav1.Condition{{
+					Type:   consts.ConditionReady,
+					Status: metav1.ConditionTrue,
+				}},
+			},
+		}
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(oci).Build()
+		err := CheckResourceStatus(oci, cl, 2*time.Second)
+		assert.Nil(t, err)
+	})
+
+	t.Run("Should return timeout error for non-ready OCIRepository", func(t *testing.T) {
+		oci := &sourcev1.OCIRepository{
+			Status: sourcev1.OCIRepositoryStatus{
+				Conditions: []metav1.Condition{},
+			},
+		}
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(oci).Build()
+		err := CheckResourceStatus(oci, cl, 1*time.Millisecond)
+		assert.Error(t, err)
+	})
 	t.Run("Should return nil for ready Deployment", func(t *testing.T) {
 		// Create a deployment object for testing
 		dep := &appsv1.Deployment{
@@ -196,6 +261,20 @@ func TestCreateResource(t *testing.T) {
 		expectedResource client.Object
 		expectedError    error
 	}{
+		"Resource creation succeeds with HelmRelease object": {
+			callMocks: func(c *test.MockClient) {
+				c.On("Create", mock.IsType(context.Background()), mock.IsType(&helmv2.HelmRelease{}), mock.Anything).Return(nil)
+			},
+			expectedResource: &helmv2.HelmRelease{},
+			expectedError:    nil,
+		},
+		"Resource creation succeeds with OCIRepository object": {
+			callMocks: func(c *test.MockClient) {
+				c.On("Create", mock.IsType(context.Background()), mock.IsType(&sourcev1.OCIRepository{}), mock.Anything).Return(nil)
+			},
+			expectedResource: &sourcev1.OCIRepository{},
+			expectedError:    nil,
+		},
 		"Resource creation fails with Deployment object": {
 			callMocks: func(c *test.MockClient) {
 				c.On("Create", mock.IsType(context.Background()), mock.IsType(&appsv1.Deployment{}), mock.Anything).Return(errors.New("Failed to create resource"))
